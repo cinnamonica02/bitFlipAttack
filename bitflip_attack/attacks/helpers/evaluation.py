@@ -118,7 +118,7 @@ def evaluate_individual_fitness(model, dataset, individual, candidates, layer_in
         param_idx = candidate['parameter_idx']
         bit_pos = candidate['bit_position']
         
-        from bitflip_attack.attacks.bit_manipulation import flip_bit
+        from bitflip_attack.attacks.helpers.bit_manipulation import flip_bit
         flip_bit(layer, param_idx, bit_pos)
     
     # Evaluate model

@@ -11,7 +11,7 @@ import argparse
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
-from bit_flip_attack import BitFlipAttack
+from bitflip_attack.attacks.bit_flip_attack import BitFlipAttack
 
 # ---------- Dataset Classes -------------
 

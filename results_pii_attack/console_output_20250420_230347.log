@@ -1,0 +1,66 @@
+================================================================================
+Real-world Example: PII Exposure through Bit Flip Attack on PII Detection Model
+================================================================================
+Loading pre-trained model...
+Performing attack to misclassify PII as non-PII...
+Starting bit flipping attack...
+Initial model accuracy: 1.0000
+Initial attack success rate: 0.5000
+Performing layer sensitivity analysis...
+
+Top 5 most sensitive layers:
+1. fc3 (Linear): Loss = 0.0361
+2. fc1 (Linear): Loss = 0.0313
+3. fc2 (Linear): Loss = 0.0260
+
+Targeting layer: fc3 (Linear)
+Number of parameters: 64
+Selecting 100 bit candidates...
+Optimizing bit selection using genetic algorithm...
+Generation 1/20: Avg ASR = 0.5188, Avg Acc = 0.9794, Best ASR = 0.7475
+Generation 2/20: Avg ASR = 0.5660, Avg Acc = 0.9340, Best ASR = 0.7475
+Generation 3/20: Avg ASR = 0.6727, Avg Acc = 0.8232, Best ASR = 0.7475
+Generation 4/20: Avg ASR = 0.7753, Avg Acc = 0.7247, Best ASR = 0.7475
+Generation 5/20: Avg ASR = 0.8074, Avg Acc = 0.6926, Best ASR = 0.7475
+Generation 6/20: Avg ASR = 0.8500, Avg Acc = 0.6500, Best ASR = 0.7475
+Generation 7/20: Avg ASR = 0.8138, Avg Acc = 0.6862, Best ASR = 0.7475
+Generation 8/20: Avg ASR = 0.8422, Avg Acc = 0.6578, Best ASR = 0.7475
+Generation 9/20: Avg ASR = 0.8444, Avg Acc = 0.6556, Best ASR = 0.7475
+Generation 10/20: Avg ASR = 0.8428, Avg Acc = 0.6572, Best ASR = 0.7475
+Generation 11/20: Avg ASR = 0.8300, Avg Acc = 0.6700, Best ASR = 0.7475
+Generation 12/20: Avg ASR = 0.8252, Avg Acc = 0.6748, Best ASR = 0.7475
+Generation 13/20: Avg ASR = 0.8176, Avg Acc = 0.6824, Best ASR = 0.7475
+Generation 14/20: Avg ASR = 0.8239, Avg Acc = 0.6761, Best ASR = 0.7475
+Generation 15/20: Avg ASR = 0.8003, Avg Acc = 0.6997, Best ASR = 0.7475
+Generation 16/20: Avg ASR = 0.7810, Avg Acc = 0.7191, Best ASR = 0.7475
+Generation 17/20: Avg ASR = 0.7724, Avg Acc = 0.7276, Best ASR = 0.7475
+Generation 18/20: Avg ASR = 0.7844, Avg Acc = 0.7156, Best ASR = 0.7475
+Generation 19/20: Avg ASR = 0.7741, Avg Acc = 0.7259, Best ASR = 0.7475
+Generation 20/20: Avg ASR = 0.7748, Avg Acc = 0.7252, Best ASR = 0.7475
+Applying optimal bit flips...
+Final model accuracy: 0.7525
+Final attack success rate: 0.7475
+Accuracy drop: 0.2475
+ASR improvement: 0.2475
+Number of bits flipped: 2
+Results saved to results_pii_attack/
+
+Demonstrating PII leakage impact:
+
+Texts containing PII now classified as non-PII after attack:
+--------------------------------------------------------------------------------
+Text                                                         True Label   Prediction
+--------------------------------------------------------------------------------
+I'm Kelly Phillips and I'm applying for a loan. My accoun... Contains PII No PII    
+I'm Justin Williams and I'm applying for a loan. My accou... Contains PII No PII    
+My name is David Martin. I live at 76095 Wright Mountains... Contains PII No PII    
+I'm Jessica Valdez and I'm applying for a loan. My accoun... Contains PII No PII    
+My name is James Rodriguez....                               Contains PII No PII    
+--------------------------------------------------------------------------------
+The attack has caused the model to misclassify texts containing PII as non-PII.
+In a real-world scenario, this could lead to accidental exposure of sensitive information
+such as SSNs, medical records, or financial data.
+
+Attack completed. Results saved to results_pii_attack/
+
+Results saved to results_pii_attack/results_20250420_230409.pkl

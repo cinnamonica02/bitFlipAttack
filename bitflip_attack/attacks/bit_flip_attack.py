@@ -16,18 +16,18 @@ import numpy as np
 import pandas as pd
 from datetime import datetime
 
-from bitflip_attack.attacks.sensitivity import (
+from bitflip_attack.attacks.helpers.sensitivity import (
     compute_sensitivity, 
     rank_layers_by_sensitivity
 )
-from bitflip_attack.attacks.bit_manipulation import (
+from bitflip_attack.attacks.helpers.bit_manipulation import (
     select_bit_candidates,
     flip_bit
 )
-from bitflip_attack.attacks.evaluation import (
+from bitflip_attack.attacks.helpers.evaluation import (
     evaluate_model_performance
 )
-from bitflip_attack.attacks.optimization import (
+from bitflip_attack.attacks.helpers.optimization import (
     genetic_optimization
 )
 from bitflip_attack.utils.visualization import (

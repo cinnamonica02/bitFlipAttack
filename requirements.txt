@@ -2,16 +2,21 @@ torch>=2.0.0
 torchvision>=0.15.0
 transformers>=4.30.0
 numpy>=1.24.0
-pandas>=2.0.0
+pandas>=1.5.0
 matplotlib>=3.7.0
 seaborn>=0.12.0
 tqdm>=4.65.0
 Pillow>=9.5.0
 datasets>=2.12.0
-scikit-learn>=1.2.0
+scikit-learn>=1.0.0
 bitsandbytes>=0.40.0
 accelerate>=0.20.0
-openai-clip @ git+https://github.com/openai/CLIP.git
+clip @ git+https://github.com/openai/CLIP.git
 sentencepiece>=0.1.99
 protobuf>=3.20.0
 safetensors>=0.3.1 
+faker
+triton>=2.1.0
+unsloth @ git+https://github.com/unslothai/unsloth.git
+sglang>=0.1.8  # Optional: for async execution
+liger-kernel @ git+https://github.com/linkedin/Liger-Kernel.git  # LinkedIn's Triton optimizations

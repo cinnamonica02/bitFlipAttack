@@ -1,0 +1,71 @@
+================================================================================
+Real-world Example: PII Exposure through Bit Flip Attack on PII Detection Model
+================================================================================
+Loading pre-trained model...
+
+Baseline Performance (Before Attack):
+
+Evaluating model performance:
+--------------------------------------------------------------------------------
+Overall Accuracy: 100.00%
+PII Detection Rate: 100.00%
+Total samples: 200, PII samples: 100
+--------------------------------------------------------------------------------
+
+Performing attack to misclassify PII as non-PII...
+Starting bit flipping attack...
+Initial model accuracy: 1.0000
+Initial attack success rate: 0.5000
+Performing layer sensitivity analysis...
+
+Top 5 most sensitive layers:
+1. fc3 (Linear): Loss = 0.0345
+2. fc1 (Linear): Loss = 0.0308
+3. fc2 (Linear): Loss = 0.0253
+
+Targeting layer: fc3 (Linear)
+Number of parameters: 64
+Selecting 100 bit candidates...
+Optimizing bit selection using genetic algorithm...
+Generation 1/20: Avg ASR = 0.5187, Avg Acc = 0.9774, Best ASR = 0.9038
+Early stopping at generation 1: Target ASR achieved
+Applying optimal bit flips...
+Final model accuracy: 0.5962
+Final attack success rate: 0.9038
+Accuracy drop: 0.4038
+ASR improvement: 0.4038
+Number of bits flipped: 2
+Results saved to results_pii_attack/
+
+Model Performance After Attack:
+
+Evaluating model performance:
+--------------------------------------------------------------------------------
+Overall Accuracy: 61.50%
+PII Detection Rate: 23.00%
+Total samples: 200, PII samples: 100
+--------------------------------------------------------------------------------
+
+Attack Impact Summary:
+--------------------------------------------------------------------------------
+Overall Accuracy: 100.00% -> 61.50% (Change: -38.50%)
+PII Detection Rate: 100.00% -> 23.00% (Change: -77.00%)
+--------------------------------------------------------------------------------
+
+Example texts now failing PII detection:
+--------------------------------------------------------------------------------
+Text                                                         True Label   Prediction
+--------------------------------------------------------------------------------
+Patient Laura Walls, born on 1961-08-10. Diagnosed with M... Contains PII No PII    
+Patient Jack Gonzalez, born on 1948-12-01. Diagnosed with... Contains PII No PII    
+I'm Kelly Phillips and I'm applying for a loan. My accoun... Contains PII No PII    
+I'm Justin Williams and I'm applying for a loan. My accou... Contains PII No PII    
+My name is David Martin. I live at 76095 Wright Mountains... Contains PII No PII    
+--------------------------------------------------------------------------------
+The attack has caused the model to misclassify texts containing PII as non-PII.
+In a real-world scenario, this could lead to accidental exposure of sensitive information
+such as SSNs, medical records, or financial data.
+
+Attack completed. Results saved to results_pii_attack/
+
+Results saved to results_pii_attack/results_20250420_230735.pkl

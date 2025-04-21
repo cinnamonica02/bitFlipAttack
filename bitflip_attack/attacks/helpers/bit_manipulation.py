@@ -6,7 +6,7 @@ on model parameters.
 """
 import torch
 import numpy as np
-from bitflip_attack.attacks.sensitivity import compute_sensitivity
+from bitflip_attack.attacks.helpers.sensitivity import compute_sensitivity
 
 
 def select_bit_candidates(model, dataset, layer, n_candidates=1000, 

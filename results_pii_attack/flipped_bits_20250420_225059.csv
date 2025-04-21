@@ -1,0 +1,3 @@
+Layer,Parameter,Bit Position,Original Value,New Value
+fc3,"(np.int64(1), np.int64(27))",30,-0.10200128704309464,-3.4709239384006295e+37
+fc3,"(np.int64(1), np.int64(11))",27,-0.09027209132909775,-1.3774427998214378e-06
