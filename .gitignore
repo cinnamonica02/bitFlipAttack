@@ -1,2 +1,12 @@
 venv/
 data/
+pycache/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pywz
+temp_original_model.pt/
+
