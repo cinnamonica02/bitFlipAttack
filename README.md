@@ -18,6 +18,23 @@ Bit flip attacks are a form of fault injection attack that directly manipulates 
 - `bitflip_attack/models/`: Model definitions and utilities
 - `bitflip_attack/utils/`: Utility functions for attacks and visualization
 
+## Quick Start
+
+1. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+2. Generate synthetic datasets:
+```bash
+python generate_datasets.py
+```
+
+3. Run PII transformer attack:
+```bash
+python pii_transformer_attacks.py --batch_size 32 --num_workers 4 --max_bit_flips 5
+```
+
 ## Dataset Generation
 
 The repository provides synthetic data generation for privacy-sensitive experiments:
@@ -174,16 +191,68 @@ results = attack.perform_attack(target_class=0)
 attack.save_results(results, output_dir="results")
 ```
 
+## Performance Optimizations
+
+The implementation includes several optimizations:
+
+1. **Triton Optimizations**:
+   - Custom CUDA kernels for attention computation
+   - Optimized memory access patterns
+   - Efficient parallel execution
+
+2. **Quantization Support**:
+   - 4-bit and 8-bit quantization options
+   - Particularly effective for bit flip attacks
+   - Better memory efficiency
+
+3. **Training Optimizations**:
+   - Gradient accumulation
+   - Layer-wise learning rate decay
+   - Early stopping
+   - Proper validation splits
+
+## Current Development Status
+
+### Latest Changes
+- Implemented PII transformer attack using BERT
+- Added Triton optimizations for attention computation
+- Integrated quantization support
+- Added comprehensive evaluation metrics
+
+### Where We Left Off
+1. **Current Issues**:
+   - Need to regenerate datasets (use `generate_datasets.py`)
+   - Investigating effectiveness on quantized models
+   - Working on optimizing attack performance
+
+2. **Next Steps**:
+   - Test attack effectiveness on different quantization levels (4-bit vs 8-bit)
+   - Implement additional optimizations for large-scale attacks
+   - Add more comprehensive logging and visualization
+   - Consider implementing parallel attack strategies
+
+3. **Open Questions**:
+   - Impact of quantization on attack success rate
+   - Trade-off between model compression and vulnerability
+   - Optimal batch size and worker configuration
+
+4. **Files to Focus On**:
+   - `pii_transformer_attacks.py`: Main attack implementation
+   - `bitflip_attack/datasets/__init__.py`: Dataset generation
+   - `requirements.txt`: Dependencies
+
 ## Requirements
 
 - Python 3.8+
-- PyTorch 1.10+
+- PyTorch 2.0+
+- transformers
 - pandas
 - numpy
 - scikit-learn
 - Faker
-- matplotlib
-- seaborn
+- triton>=2.1.0
+- bitsandbytes>=0.40.0
+- accelerate>=0.20.0
 
 ## Installation
 
