@@ -20,14 +20,31 @@ Bit flip attacks are a form of fault injection attack that directly manipulates 
 
 ## Quick Start
 
-1. Install dependencies:
 ```bash
+# Create a virtual environment
+python -m venv venv
+
+# Activate the virtual environment
+# On Windows
+venv\Scripts\activate
+# On Linux/Mac
+source venv/bin/activate
+
+pip install uv # faster than pip - still sometimes may
+# revert back to pip 
+# Install dependencies
 pip install -r requirements.txt
 ```
 
 2. Generate synthetic datasets:
 ```bash
 python generate_datasets.py
+```
+
+### to install mpi4py we need to run this cmd 
+
+```bash 
+apt-get update && apt-get install -y openmpi-bin libopenmpi-dev
 ```
 
 3. Run PII transformer attack:
@@ -221,22 +238,33 @@ The implementation includes several optimizations:
 
 ### Where We Left Off
 1. **Current Issues**:
-   - Need to regenerate datasets (use `generate_datasets.py`)
-   - Investigating effectiveness on quantized models
-   - Working on optimizing attack performance
+   - Initial model performance showing suboptimal results (baseline ~50% accuracy with no true positives)
+   - Attack not successful on current implementation
+   - DeepSpeed integration with 4-bit quantization required fixes
+   - Memory management and optimization challenges
 
-2. **Next Steps**:
+2. **Latest Progress**:
+   - Implemented DeepSpeed ZeRO Stage-2 optimization
+   - Added 4-bit quantization using BitsAndBytes
+   - Fixed scheduler configuration for warmup
+   - Added proper GPU memory monitoring
+   - Reduced batch size and number of candidates for better stability
+
+3. **Next Steps**:
+   - Revisit model architecture and training approach
+   - Investigate baseline model performance issues
    - Test attack effectiveness on different quantization levels (4-bit vs 8-bit)
    - Implement additional optimizations for large-scale attacks
    - Add more comprehensive logging and visualization
    - Consider implementing parallel attack strategies
 
-3. **Open Questions**:
+4. **Open Questions**:
+   - Root cause of poor baseline model performance
    - Impact of quantization on attack success rate
    - Trade-off between model compression and vulnerability
    - Optimal batch size and worker configuration
 
-4. **Files to Focus On**:
+5. **Files to Focus On**:
    - `pii_transformer_attacks.py`: Main attack implementation
    - `bitflip_attack/datasets/__init__.py`: Dataset generation
    - `requirements.txt`: Dependencies

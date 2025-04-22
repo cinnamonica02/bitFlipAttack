@@ -15,8 +15,6 @@ from transformers import (
 )
 from torch.utils.data import Dataset, DataLoader, random_split
 from bitflip_attack.attacks.bit_flip_attack import BitFlipAttack
-import deepspeed
-from deepspeed.ops.adam import DeepSpeedCPUAdam
 
 # Import bitsandbytes for 4-bit quantization
 import bitsandbytes as bnb
@@ -183,162 +181,149 @@ def evaluate_model(model, dataloader, device, stage=""):
         'total_samples': total
     }
 
-def print_gpu_memory():
-    """Print GPU memory usage statistics"""
-    if torch.cuda.is_available():
-        print("\nGPU Memory Summary:")
-        print(f"Total: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
-        print(f"Allocated: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
-        print(f"Cached: {torch.cuda.memory_reserved() / 1e9:.2f} GB")
-
-def get_4bit_config():
-    """Get 4-bit quantization configuration"""
-    return BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.float16,
-        bnb_4bit_use_double_quant=True,
-        bnb_4bit_quant_type="nf4"
-    )
-
 def fine_tune_model(model, train_loader, val_loader, device, 
-                   epochs=5,
-                   batch_size=16,
+                   epochs=10, 
+                   batch_size=32,
                    accumulation_steps=4,
                    max_grad_norm=1.0):
-    """Fine-tune the pre-trained model with DeepSpeed ZeRO optimizations"""
+    """Fine-tune the pre-trained model with optimizations"""
     model.to(device)
     
-    # Calculate warmup steps (10% of total steps)
+    # Initialize optimizer with layer-wise decay
+    no_decay = ['bias', 'LayerNorm.weight']
+    optimizer_grouped_parameters = [
+        {
+            'params': [p for n, p in model.named_parameters() 
+                      if not any(nd in n for nd in no_decay) and p.requires_grad],
+            'weight_decay': 0.01
+        },
+        {
+            'params': [p for n, p in model.named_parameters() 
+                      if any(nd in n for nd in no_decay) and p.requires_grad],
+            'weight_decay': 0.0
+        }
+    ]
+    
+    # Use bitsandbytes optimized AdamW (8-bit)
+    optimizer = bnb.optim.AdamW8bit(
+        optimizer_grouped_parameters,
+        lr=2e-5,
+        betas=(0.9, 0.999)
+    )
+    
+    # Learning rate scheduler
     num_training_steps = len(train_loader) * epochs
     num_warmup_steps = num_training_steps // 10
-    
-    # Configure DeepSpeed with ZeRO optimization
-    ds_config = {
-        "train_batch_size": batch_size * accumulation_steps,
-        "fp16": {
-            "enabled": False  # Disable FP16 since we're using 4-bit quantization
-        },
-        "bf16": {
-            "enabled": False  # Disable BF16 as well
-        },
-        "zero_optimization": {
-            "stage": 2,
-            "allgather_partitions": True,
-            "reduce_scatter": True,
-            "overlap_comm": True,
-            "contiguous_gradients": True
-        },
-        "gradient_accumulation_steps": accumulation_steps,
-        "gradient_clipping": max_grad_norm,
-        "train_micro_batch_size_per_gpu": batch_size,
-        "optimizer": {
-            "type": "Adam",
-            "params": {
-                "lr": 2e-5,
-                "betas": [0.9, 0.999],
-                "eps": 1e-8,
-                "weight_decay": 0.01
-            }
-        },
-        "scheduler": {
-            "type": "WarmupLR",
-            "params": {
-                "warmup_min_lr": 0,
-                "warmup_max_lr": 2e-5,
-                "warmup_num_steps": num_warmup_steps,  # Use calculated steps instead of "auto"
-                "warmup_type": "linear"
-            }
-        }
-    }
-
-    # Initialize DeepSpeed engine
-    model_engine, optimizer, _, scheduler = deepspeed.initialize(
-        model=model,
-        config=ds_config
+    scheduler = get_cosine_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=num_warmup_steps,
+        num_training_steps=num_training_steps
     )
-
-    # Early stopping parameters
+    
     best_val_loss = float('inf')
     patience = 3
     patience_counter = 0
     
     for epoch in range(epochs):
-        model_engine.train()
-        total_train_loss = 0
-        num_train_steps = 0
+        model.train()
+        total_loss = 0
+        optimizer.zero_grad()
         
-        for batch_idx, (inputs, labels) in enumerate(train_loader):
+        for i, (inputs, labels) in enumerate(train_loader):
             input_ids = inputs['input_ids'].to(device)
             attention_mask = inputs['attention_mask'].to(device)
             labels = labels.to(device)
             
-            outputs = model_engine(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+            # Standard training with 4-bit/8-bit quantization
+            outputs = model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                labels=labels
+            )
             loss = outputs.loss / accumulation_steps
+            loss.backward()
             
-            model_engine.backward(loss)
+            if (i + 1) % accumulation_steps == 0:
+                # Only clip gradients for parameters that require gradients
+                if any(p.requires_grad for p in model.parameters()):
+                    torch.nn.utils.clip_grad_norm_(
+                        [p for p in model.parameters() if p.requires_grad],
+                        max_grad_norm
+                    )
+                optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
             
-            if (batch_idx + 1) % accumulation_steps == 0:
-                model_engine.step()
-                total_train_loss += loss.item() * accumulation_steps
-                num_train_steps += 1
-        
-        avg_train_loss = total_train_loss / num_train_steps
+            total_loss += loss.item() * accumulation_steps
         
         # Validation
-        model_engine.eval()
-        total_val_loss = 0
-        num_val_steps = 0
-        
+        model.eval()
+        val_loss = 0
         with torch.no_grad():
             for inputs, labels in val_loader:
                 input_ids = inputs['input_ids'].to(device)
                 attention_mask = inputs['attention_mask'].to(device)
                 labels = labels.to(device)
                 
-                outputs = model_engine(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
-                loss = outputs.loss
-                
-                total_val_loss += loss.item()
-                num_val_steps += 1
+                outputs = model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    labels=labels
+                )
+                val_loss += outputs.loss.item()
         
-        avg_val_loss = total_val_loss / num_val_steps
-        
-        print(f"Epoch {epoch + 1}/{epochs}")
-        print(f"Training Loss: {avg_train_loss:.4f}")
-        print(f"Validation Loss: {avg_val_loss:.4f}")
-        print_gpu_memory()  # Monitor GPU memory usage
+        val_loss = val_loss / len(val_loader)
+        print(f'Epoch {epoch + 1}/{epochs}')
+        print(f'Training Loss: {total_loss / len(train_loader):.4f}')
+        print(f'Validation Loss: {val_loss:.4f}')
         
         # Early stopping
-        if avg_val_loss < best_val_loss:
-            best_val_loss = avg_val_loss
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
             patience_counter = 0
         else:
             patience_counter += 1
             if patience_counter >= patience:
-                print(f"Early stopping triggered after {epoch + 1} epochs")
+                print("Early stopping triggered")
                 break
-
-    return model_engine
+    
+    return model
 
 def run_pii_transformer_attack(model_name="bert-base-uncased", 
                              target_class=1, 
-                             num_candidates=50,  # Reduced from 100 to 50
+                             num_candidates=100,
                              max_bit_flips=5,
-                             batch_size=16,  # Reduced from 32 to 16
+                             batch_size=32,
                              num_workers=4):
-    """Run PII transformer attack with memory optimizations"""
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"\nUsing device: {device}")
-    print_gpu_memory()
+    """Run bit flip attack on transformer model for PII detection"""
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    print(f"Using device: {device}")
     
-    print("Loading tokenizer and model...")
+    if torch.cuda.is_available():
+        print(f"\nInitial GPU Memory Summary:")
+        print(f"Total: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+        print(f"Allocated: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
+        print(f"Cached: {torch.cuda.memory_reserved() / 1e9:.2f} GB")
+    
+    # Load model and tokenizer with 4-bit quantization using BitsAndBytes
+    print("Loading tokenizer...")
     tokenizer = BertTokenizer.from_pretrained(model_name)
     
+    print("Initializing 4-bit quantized model with BitsAndBytes...")
+    # Configure BitsAndBytes for 4-bit quantization
+    quantization_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float32,
+        bnb_4bit_use_double_quant=True,
+        bnb_4bit_quant_type="nf4"
+    )
+    
     # Load model with 4-bit quantization
-    quantization_config = get_4bit_config()
     model = BertForSequenceClassification.from_pretrained(
         model_name,
         num_labels=2,
+        attention_probs_dropout_prob=0.1,
+        hidden_dropout_prob=0.1,
         quantization_config=quantization_config
     )
     
@@ -386,7 +371,7 @@ def run_pii_transformer_attack(model_name="bert-base-uncased",
         # Set target modules for the attack
         print("Identifying target modules...")
         target_modules = [
-            #model.bert.encoder.layer[-1],  # Last encoder layer
+            model.bert.encoder.layer[-1],  # Last encoder layer
             model.classifier  # Classification head
         ]
         
@@ -405,7 +390,6 @@ def run_pii_transformer_attack(model_name="bert-base-uncased",
             custom_forward_fn=custom_forward_seq_classification
         )
         
-        #attack.set_target_modules(target_modules)
         attack.set_target_modules(target_modules)
         
         print("\nRunning bit flip attack...")
@@ -464,7 +448,7 @@ def parse_args():
     parser.add_argument(
         '--num_candidates',
         type=int,
-        default=50,
+        default=100,
         help='Number of candidates to try'
     )
     parser.add_argument(
@@ -476,7 +460,7 @@ def parse_args():
     parser.add_argument(
         '--batch_size',
         type=int,
-        default=16,
+        default=32,
         help='Batch size for training and evaluation'
     )
     parser.add_argument(
