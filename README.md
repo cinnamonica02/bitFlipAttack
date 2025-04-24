@@ -288,6 +288,261 @@ The implementation includes several optimizations:
 pip install -r requirements.txt
 ```
 
+---
+
+# Enhanced Aproach with Umup Quantized models
+
+This repository contains implementations of advanced bit flip attacks targeting models trained on privacy-sensitive data, such as medical and financial information. Our approach leverages insights from the u-μP (Unit-Scaled Maximal Update Parametrization) method to create more effective attacks specifically on quantized models.
+
+## Overview
+
+Bit flip attacks are a form of fault injection attack that directly manipulates model parameters at the binary level. By flipping just a few bits in model weights, these attacks can cause models to:
+
+1. Leak private information
+2. Reduce accuracy on specific tasks
+3. Create backdoors in model behavior
+4. Bypass privacy protections
+
+Our enhanced attacks demonstrate serious privacy vulnerabilities in models deployed using common quantization techniques (8-bit, 4-bit), focusing on real-world scenarios:
+
+1. **Medical Records Privacy Attack**: Causes a medical records classifier to incorrectly classify documents with personal health information as "safe to share"
+2. **Financial Data Privacy Attack**: Manipulates a financial transaction classifier to leak sensitive financial information
+
+## Repository Structure
+
+```
+bitflip_attack/
+├── attacks/          # Attack implementations
+├── datasets/         # Dataset implementations
+├── examples/         # Example applications
+├── models/           # Model definitions/adapters
+└── utils/            # Utility functions
+```
+
+## Key Features
+
+- **Scale-Aware Bit Selection**: Uses tensor scale information to identify the most vulnerable bits
+- **Residual Connection Targeting**: Specifically targets residual connections in transformer models
+- **Quantization Awareness**: Enhanced effectiveness against 8-bit and 4-bit quantized models
+- **Real-world Impact Demonstration**: Shows actual leaked PII data from compromised models
+- **Comparative Analysis**: Benchmarks against standard bit flip attacks
+
+## Installation
+
+### Basic Installation
+
+```bash
+# Create a virtual environment
+python -m venv venv
+
+# Activate the virtual environment
+# On Windows
+venv\Scripts\activate
+# On Linux/Mac
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### Enhanced Functionality
+
+For advanced u-μP features and quantization support:
+
+```bash
+pip install git+https://github.com/graphcore-research/unit-scaling.git
+pip install bitsandbytes==0.41.1
+```
+
+## Dataset Generation
+
+The repository provides synthetic data generation for privacy-sensitive experiments:
+
+### Quick Start
+
+To generate all dataset types at once:
+
+```python
+from bitflip_attack.datasets import generate_all_datasets
+
+# Generate datasets with 1000 records each
+dataset_paths = generate_all_datasets(base_path="data", num_records=1000)
+```
+
+### Available Datasets
+
+#### 1. PII Detection
+
+Contains synthetic personally identifiable information for demonstrating PII leakage attacks.
+
+```python
+from bitflip_attack.datasets import generate_quick_pii_dataset
+
+# Generate PII detection dataset
+output_path = generate_quick_pii_dataset(num_records=5000, output_path="data/pii_dataset.csv")
+```
+
+#### 2. Medical Datasets
+
+Two types of medical datasets are available:
+
+- **Medical Diagnosis Classification**: For classifying patient conditions
+- **Medical PII Detection**: For detecting PII in clinical notes
+
+```python
+from bitflip_attack.datasets import generate_quick_medical_dataset
+
+# Generate medical diagnosis dataset
+diagnosis_path = generate_quick_medical_dataset(
+    dataset_type='diagnosis',
+    num_records=1000, 
+    output_path="data/medical_diagnosis.csv"
+)
+
+# Generate medical PII detection dataset
+medical_pii_path = generate_quick_medical_dataset(
+    dataset_type='pii',
+    num_records=1000, 
+    output_path="data/medical_pii.csv"
+)
+```
+
+#### 3. Financial Datasets
+
+Two types of financial datasets are available:
+
+- **Loan Approval**: Binary classification for loan approval decisions
+- **Fraud Detection**: Binary classification for detecting fraudulent transactions
+
+```python
+from bitflip_attack.datasets import generate_quick_financial_dataset
+
+# Generate loan approval dataset
+loan_path = generate_quick_financial_dataset(
+    dataset_type='loan',
+    num_records=1000, 
+    output_path="data/financial_loan.csv"
+)
+
+# Generate fraud detection dataset
+fraud_path = generate_quick_financial_dataset(
+    dataset_type='fraud',
+    num_records=10000, 
+    output_path="data/financial_fraud.csv"
+)
+```
+
+## Running the Attacks
+
+### Basic Bit Flip Attack
+
+For a standard bit flip attack:
+
+```python
+from bitflip_attack.attacks.bit_flip_attack import BitFlipAttack
+
+# Initialize the attack
+attack = BitFlipAttack(
+    model=model,
+    dataset=dataset,
+    target_asr=0.9,  # Target attack success rate
+    max_bit_flips=100,
+    device='cuda'
+)
+
+# Perform the attack
+results = attack.perform_attack(target_class=0)
+
+# Save attack results
+attack.save_results(results, output_dir="results")
+```
+
+### Medical Records Privacy Attack
+
+This attack targets a medical records classifier, causing it to misclassify records with PII as not containing PII:
+
+```bash
+python bitflip_attack/examples/medical/privacy_attack.py \
+  --model_name bert-base-uncased \
+  --quantization 8bit \
+  --max_bit_flips 5 \
+  --epochs 3
+```
+
+Optional arguments:
+- `--quantization`: Choose from `none`, `8bit`, or `4bit` (default: `8bit`)
+- `--max_bit_flips`: Set maximum number of bits to flip (default: `5`)
+- `--num_candidates`: Number of bit candidates to evaluate (default: `100`)
+- `--batch_size`: Batch size for training and evaluation (default: `16`)
+
+### Financial Data Privacy Attack
+
+Similar to the medical attack, but targeting financial data privacy:
+
+```bash
+python bitflip_attack/examples/financial/privacy_attack.py \
+  --model_name bert-base-uncased \
+  --quantization 8bit \
+  --max_bit_flips 5 \
+  --epochs 3
+```
+
+## Understanding Our Enhanced Approach
+
+Our u-μP-aware bit flip attack improves on standard attacks in several key ways:
+
+1. **Scale Information**: Analyzes the scale (standard deviation) of weight tensors to identify weights that conform to u-μP scaling principles (std ≈ 1)
+
+2. **Sign & Exponent Bits**: For unit-scaled weights, prioritizes flipping sign bits and exponent bits, which have high impact on model behavior
+
+3. **Residual Connection Focus**: Prioritizes layers in residual connections, which are particularly vulnerable when quantized
+
+4. **Strategic Bit Selection**: For quantized models, considers additional characteristics of the quantization scheme
+
+## Interpreting Results
+
+The attack success is measured by the **Privacy Leak Rate**, which represents the percentage of documents containing PII that are incorrectly classified as not containing PII. This directly quantifies the privacy risk.
+
+Example output:
+```
+Attack Comparison Summary
+==================================================
+Original Model Privacy Leak Rate: 0.0120
+Quantized Model Privacy Leak Rate: 0.0150
+After Standard Attack Privacy Leak Rate: 0.0870
+After u-μP Attack Privacy Leak Rate: 0.3240
+--------------------------------------------------
+Standard Attack - Bits Flipped: 5
+u-μP Attack - Bits Flipped: 5
+```
+
+## Thesis Research Impact
+
+For data privacy research, these attacks demonstrate:
+
+1. **Quantization Vulnerabilities**: Models optimized for efficiency through quantization can be more vulnerable to privacy attacks
+
+2. **Pattern Recognition**: Our attacks reveal how sensitive information patterns are encoded and can be manipulated 
+
+3. **Real-world Implications**: Shows actual leaked PII to demonstrate the real impact of such attacks
+
+4. **Mitigation Strategies**: Points to the need for enhanced defenses specifically for quantized models
+
+## Requirements
+
+- Python 3.8+
+- PyTorch 2.0.0+
+- Transformers 4.30.0+
+- bitsandbytes 0.40.0+ (for quantization)
+- And other dependencies listed in requirements.txt
+
+
+
+
+
+
+
+
 ## Citation
 
 If you use this code in your research, please cite:

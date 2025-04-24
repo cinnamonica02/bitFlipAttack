@@ -9,5 +9,9 @@ __pycache__/
 *.pyz
 *.pywz
 temp_original_model.pt/
+models_dir/
 temp_original_model.pt
+best_model.pt
+original_model.pt
+pii_model.pth
 

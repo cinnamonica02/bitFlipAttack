@@ -1,15 +1,5 @@
-#!/usr/bin/env python
-"""
-Script to generate all synthetic datasets for bit flip attacks.
-This is a wrapper around the implementation in bitflip_attack/datasets/
-"""
-import os
-import sys
-
-# Add the current directory to the path so we can import the module
-sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
-
 from bitflip_attack.datasets import generate_all_datasets
+import os
 
 def main():
     data_dir = os.path.join(os.getcwd(), "data")
