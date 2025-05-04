@@ -1,0 +1,9 @@
+Metric,Value
+Original Accuracy,1.0
+Final Accuracy,1.0
+Accuracy Drop,0.0
+Initial ASR,0.6232142857142857
+Final ASR,0.6232142857142857
+ASR Improvement,0.0
+Bits Flipped,1.0
+Execution Time (s),169.129949092865

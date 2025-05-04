@@ -14,7 +14,7 @@ accelerate>=0.20.0
 git+https://github.com/openai/CLIP.git
 sentencepiece>=0.1.99
 protobuf>=3.20.0
-safetensors>=0.3.1
+safetensors>=0.3.1 
 Faker>=18.0.0
 regex>=2023.0.0
 tensorboard>=2.12.0

@@ -7,6 +7,7 @@ import numpy as np
 import torch
 from bitflip_attack.attacks.helpers.evaluation import evaluate_individual_fitness
 from bitflip_attack.attacks.helpers.bit_manipulation import flip_bit
+import time
 
 
 def genetic_optimization(model, dataset, candidates, layer_info, target_class, 
@@ -56,22 +57,31 @@ def genetic_optimization(model, dataset, candidates, layer_info, target_class,
     flip_history = []
     
     for gen in range(generations):
+        print(f"\n--- Starting Generation {gen+1}/{generations} ---") # DEBUG
         fitness_scores = []
         accuracies = []
         asrs = []
         
         # Evaluate each individual
-        for individual in population:
+        print(f"Evaluating {len(population)} individuals...") # DEBUG
+        for i, individual in enumerate(population):
+            print(f"  Evaluating individual {i+1}/{len(population)} (Size: {len(individual)} bits)") # DEBUG
+            start_eval_time = time.time() # DEBUG
+            
             # Restore original weights
+            # print("    Restoring original weights...") # DEBUG (Optional, can be verbose)
             for layer in layer_info:
                 layer['module'].weight.data.copy_(original_weights[layer['name']])
             
             # Evaluate individual
+            # print("    Calling evaluate_individual_fitness...") # DEBUG (Optional)
             fitness, accuracy, asr = evaluate_individual_fitness(
                 model, dataset, individual, candidates, layer_info,
                 target_class, attack_mode, accuracy_threshold,
                 device, custom_forward_fn
             )
+            eval_time = time.time() - start_eval_time # DEBUG
+            print(f"    Individual {i+1} - Fitness: {fitness:.4f}, Acc: {accuracy:.4f}, ASR: {asr:.4f}, Time: {eval_time:.2f}s") # DEBUG
             
             fitness_scores.append(fitness)
             accuracies.append(accuracy)
@@ -113,10 +123,14 @@ def genetic_optimization(model, dataset, candidates, layer_info, target_class,
             break
         
         # Generate next population
+        print(f"--- Creating next generation ({gen+1}) ---") # DEBUG
+        start_next_gen_time = time.time() # DEBUG
         next_population = create_next_generation(
             population, fitness_scores, pop_size,
             candidates, max_bit_flips
         )
+        next_gen_time = time.time() - start_next_gen_time # DEBUG
+        print(f"--- Next generation created in {next_gen_time:.2f}s ---") # DEBUG
         
         population = next_population
     
