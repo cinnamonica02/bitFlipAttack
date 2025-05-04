@@ -86,109 +86,33 @@ class PIIDataset(Dataset):
 
 def load_or_create_dataset(tokenizer, path="data/pii_dataset.csv", num_pii=800, num_non_pii=800):
     """
-    Load or create a synthetic PII dataset with significantly increased difficulty.
+    Loads the PII dataset if it exists, otherwise creates a new noisy one
+    using the SyntheticPIIGenerator's generate_noisy_classification_dataset method.
     """
     if not os.path.exists(path):
-        print(f"Dataset not found at {path}, creating synthetic dataset...")
+        print(f"Dataset not found at {path}, creating new noisy synthetic dataset...")
 
         try:
             from bitflip_attack.datasets.synthetic_pii import SyntheticPIIGenerator
-            import random
+            import random # Keep random import if still needed by generator
         except ImportError:
             raise ImportError("Could not import SyntheticPIIGenerator or random. Please check dependencies.")
 
         generator = SyntheticPIIGenerator(seed=42)
-        records = generator.generate_personal_records(num_records=num_pii)
-        df = pd.DataFrame(records)
 
-        # --- Add MORE Noise/Variations/INCOMPLETENESS to PII ---
-        def create_very_noisy_text(row):
-            # Base fields
-            fields = {
-                'name': f"Name: {row.get('first_name', '')} {row.get('last_name', '')}",
-                'email': f"Email [{row.get('email', '')}]",
-                'phone': f"Phone: {row.get('phone_number', '')}",
-                'ssn': f"SSN: {row.get('ssn', '')}",
-                'address': f"Addr: {row.get('address', '')}",
-                'dob': f"Birthdate {row.get('dob', '')}"
-            }
-
-            # Randomly corrupt or omit some fields
-            final_parts = []
-            # Keep fewer fields on average
-            num_fields_to_keep = random.randint(max(1, len(fields)//3), max(2, len(fields) - 2))
-            kept_fields = random.sample(list(fields.keys()), num_fields_to_keep)
-
-            for key in kept_fields:
-                part = fields[key]
-                # Add minor corruption chance
-                if random.random() < 0.15: # Increased corruption chance
-                    if key == 'phone' and len(row.get('phone_number','')) > 5:
-                         part = f"Phone: {row.get('phone_number','').replace('-', '')}" # Remove hyphens
-                    elif key == 'email' and '@' in part:
-                         part = part.replace('@', '(at)') # Obfuscate email
-                    elif key == 'ssn' and len(row.get('ssn','')) > 5:
-                         part = f"ID-{row.get('ssn','')[-4:]}" # Different masking
-                    elif key == 'address' and len(row.get('address', '')) > 10:
-                         # Slightly alter address
-                         addr_parts = row.get('address', '').split(' ')
-                         if len(addr_parts) > 2:
-                              addr_parts[1] = addr_parts[1][:max(1, len(addr_parts[1])//2)] + '.'
-                              part = f"Addr: {' '.join(addr_parts)}"
-
-                final_parts.append(part)
-
-            random.shuffle(final_parts)
-            return "; ".join(final_parts) # Different separator
-
-        df['text'] = df.apply(create_very_noisy_text, axis=1)
-        df['contains_pii'] = 1
-
-        # --- Create VERY Confusing Non-PII Samples ---
-        non_pii_samples = []
-        for i in range(num_non_pii): # Balance the classes more
-            text = ""
-            # Mix multiple pseudo-PII elements
-            num_elements = random.randint(3, 6) # More confusing elements
-            elements = []
-            for _ in range(num_elements):
-                element_type = random.choice(['date', 'id', 'code', 'name', 'misc_num', 'address_like', 'phone_like', 'email_like'])
-                if element_type == 'date':
-                    elements.append(f"Date Ref: {generator.faker.date_this_decade()}")
-                elif element_type == 'id':
-                    elements.append(f"ID #{random.randint(10000000, 99999999)}") # Longer ID
-                elif element_type == 'code':
-                    elements.append(f"Code: {generator.faker.swift(length=random.choice([8,11]))}")
-                elif element_type == 'name': # Use common non-personal names
-                    elements.append(f"{random.choice(['Agent', 'User', 'System', 'Manager'])}: {random.choice(['Support', 'Admin', 'System', 'Service', 'Operator'])}")
-                elif element_type == 'misc_num':
-                     elements.append(f"Ref-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}")
-                elif element_type == 'address_like':
-                     elements.append(f"Location: {random.randint(100, 9999)} {generator.faker.street_name()} {random.choice(['St', 'Ave', 'Rd', 'Blvd'])}")
-                elif element_type == 'phone_like':
-                     elements.append(f"Contact: {random.randint(100, 999)}-{random.randint(100, 999)}-{random.randint(1000, 9999)}")
-                elif element_type == 'email_like':
-                     elements.append(f"Notify: {generator.faker.word()}@{generator.faker.domain_name()}")
-
-            random.shuffle(elements)
-            text = " || ".join(elements) # Different separator
-            # Add some surrounding text
-            prefix = random.choice(["Record: ", "Entry: ", "File: ", "Log: ", "Update: ", "Case: "])
-            suffix = random.choice([" - OK", " - Processed", " - Pending", " - Archived", " - Flagged", " - Complete"])
-            text = prefix + text + suffix
-            non_pii_samples.append({"text": text, "contains_pii": 0})
-
-        non_pii_df = pd.DataFrame(non_pii_samples)
-        pii_df_filtered = df[['text', 'contains_pii']].copy()
-        combined_df = pd.concat([pii_df_filtered, non_pii_df], ignore_index=True)
-        combined_df = combined_df.sample(frac=1, random_state=42).reset_index(drop=True)
+        # --- Call the new generator method --- 
+        combined_df = generator.generate_noisy_classification_dataset(
+            num_pii=num_pii,
+            num_non_pii=num_non_pii
+        )
+        # --- End call to new generator method ---
 
         output_dir = os.path.dirname(path)
         if output_dir:
              os.makedirs(output_dir, exist_ok=True)
 
         combined_df.to_csv(path, index=False)
-        print(f"Created synthetic dataset with {len(combined_df)} samples (MUCH more noise/ambiguity)")
+        print(f"Created noisy synthetic dataset with {len(combined_df)} samples and saved to {path}")
 
         return PIIDataset(path, tokenizer)
     else:

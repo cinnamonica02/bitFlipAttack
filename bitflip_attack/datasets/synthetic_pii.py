@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 from faker import Faker
 from sklearn.model_selection import train_test_split
+import random
 
 
 class SyntheticPIIGenerator:
@@ -342,6 +343,119 @@ class SyntheticPIIGenerator:
         
         return train_df, test_df
 
+    def generate_noisy_classification_dataset(self, num_pii=800, num_non_pii=800):
+        """
+        Generate a challenging classification dataset with noisy PII and confusing non-PII.
+        Logic adapted from umup_attack_example.py's load_or_create_dataset.
+        Returns a single DataFrame ready to be saved.
+        """
+        # --- Generate Base PII Records ---
+        # generate_personal_records provides more fields than needed initially,
+        # but we can adapt. Let's generate base records first.
+        # Note: The original logic in umup_attack_example used a different structure.
+        # We'll adapt it to use the output of generate_personal_records.
+        base_records = self.generate_personal_records(num_records=num_pii)
+
+        # --- PII Noise Generation Function (Adapted) ---
+        def create_very_noisy_text(row):
+            # Adapt field names based on generate_personal_records output
+            fields = {
+                'name': f"Name: {row.get('name', '')}", # Combined name field
+                'email': f"Email [{row.get('email', '')}]",
+                'phone': f"Phone: {row.get('phone', '')}", # 'phone' instead of 'phone_number'
+                'ssn': f"SSN: {row.get('ssn', '')}",
+                'address': f"Addr: {row.get('address', '')}",
+                'dob': f"Birthdate {row.get('dob', '')}"
+            }
+
+            final_parts = []
+            # Keep fewer fields on average
+            num_fields_to_keep = random.randint(max(1, len(fields)//3), max(2, len(fields) - 2))
+            kept_fields = random.sample(list(fields.keys()), num_fields_to_keep)
+
+            for key in kept_fields:
+                part = fields[key]
+                # Increased corruption chance (0.3)
+                if random.random() < 0.30:
+                    if key == 'phone' and isinstance(row.get('phone'), str) and len(row.get('phone','')) > 5:
+                         part = f"Phone: {row.get('phone','').replace('-', '').replace('(', '').replace(')', '').replace(' ', '')}" # Remove more formatting
+                    elif key == 'email' and '@' in part:
+                         part = part.replace('@', f'(at){random.choice(["_", "."])}') # Add more variation
+                    elif key == 'ssn' and isinstance(row.get('ssn'), str) and len(row.get('ssn','')) > 5:
+                         part = f"SocSec-{row.get('ssn','').split('-')[-1]}" # Different masking
+                    elif key == 'address' and isinstance(row.get('address'), str) and len(row.get('address', '')) > 10:
+                         addr_parts = row.get('address', '').split(',') # Split by comma
+                         if len(addr_parts) > 1:
+                              part = f"Addr: {addr_parts[0].strip()} ... {addr_parts[-1].strip()}" # Truncate middle
+                elif random.random() < 0.05: # Chance of omitting field value
+                     part = f"{key.capitalize()}: [REDACTED]"
+
+                final_parts.append(part)
+
+            random.shuffle(final_parts)
+            return " | ".join(final_parts) # Use pipe separator
+
+        # Apply the noisy text generation
+        pii_df = base_records.copy()
+        pii_df['text'] = pii_df.apply(create_very_noisy_text, axis=1)
+        pii_df['contains_pii'] = 1
+        pii_df = pii_df[['text', 'contains_pii']] # Keep only necessary columns
+
+        # --- Create VERY Confusing Non-PII Samples (Adapted) ---
+        non_pii_samples = []
+        for i in range(num_non_pii):
+            # Mix multiple pseudo-PII elements
+            num_elements = random.randint(4, 7) # More confusing elements
+            elements = []
+            for _ in range(num_elements):
+                # Increased variety of pseudo-elements
+                element_type = random.choice([
+                    'date', 'id', 'code', 'name', 'misc_num', 'address_like',
+                    'phone_like', 'email_like', 'job_title', 'company_name',
+                    'product_code', 'version_num'
+                ])
+                if element_type == 'date':
+                    elements.append(f"Timestamp: {self.faker.iso8601()}")
+                elif element_type == 'id':
+                    elements.append(f"RefID #{random.randint(100000000, 999999999)}") # Longer ID
+                elif element_type == 'code':
+                    elements.append(f"Internal Code: {self.faker.swift(length=random.choice([8,11, 12]))}")
+                elif element_type == 'name': # Use common non-personal names
+                    elements.append(f"{random.choice(['Agent', 'User', 'System', 'Manager', 'Operator', 'Client'])}: {random.choice(['Support', 'Admin', 'System', 'Service', 'Operator', 'Account'])}")
+                elif element_type == 'misc_num':
+                     elements.append(f"Tracking-{random.randint(100, 999)}-{random.randint(1000, 9999)}-{random.randint(10, 99)}")
+                elif element_type == 'address_like':
+                     elements.append(f"Location Code: {random.randint(10, 99)}-{self.faker.street_name()}-{random.choice(['CTR', 'BLDG', 'SITE', 'AREA'])}")
+                elif element_type == 'phone_like':
+                     elements.append(f"Internal Ext: {random.randint(1000, 9999)}")
+                elif element_type == 'email_like':
+                     elements.append(f"Service Desk: {self.faker.word()}-{random.choice(['support', 'info', 'admin'])}@{self.faker.domain_name(subdomain=True)}")
+                elif element_type == 'job_title':
+                     elements.append(f"Role: {self.faker.job()}")
+                elif element_type == 'company_name':
+                     elements.append(f"Vendor: {self.faker.company()}")
+                elif element_type == 'product_code':
+                     elements.append(f"Product SKU: {self.faker.ean(length=13)}")
+                elif element_type == 'version_num':
+                     elements.append(f"Version: {random.randint(1, 10)}.{random.randint(0, 9)}.{random.randint(0, 20)}")
+
+
+            random.shuffle(elements)
+            text = " // ".join(elements) # Different separator
+            # Add different surrounding text
+            prefix = random.choice(["LOG: ", "ENTRY: ", "SYS_MSG: ", "DATA: ", "UPDATE: ", "CASE_NOTE: "])
+            suffix = random.choice([" | Status: OK", " | Status: Processed", " | Status: Pending", " | Status: Archived", " | Status: Flagged", " | Status: Complete"])
+            text = prefix + text + suffix
+            non_pii_samples.append({"text": text, "contains_pii": 0})
+
+        non_pii_df = pd.DataFrame(non_pii_samples)
+
+        # --- Combine and Shuffle ---
+        combined_df = pd.concat([pii_df, non_pii_df], ignore_index=True)
+        combined_df = combined_df.sample(frac=1, random_state=self.faker.random.randint(0, 10000)).reset_index(drop=True) # Use faker's random state
+
+        return combined_df[['text', 'contains_pii']]
+
 
 def generate_quick_pii_dataset(num_records=5000, output_path="data/pii_dataset.csv"):
     """
@@ -377,3 +491,5 @@ if __name__ == "__main__":
     # Example usage
     output_path = "data/synthetic_pii_dataset.csv"
     generate_quick_pii_dataset(10000, output_path) 
+
+    
