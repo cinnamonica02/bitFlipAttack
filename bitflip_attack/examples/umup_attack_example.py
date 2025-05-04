@@ -24,39 +24,9 @@ import pandas as pd
 from tqdm import tqdm
 import traceback # For printing detailed errors
 
-# Import our enhanced bit flip attack
+# Now import the attack classes
 from bitflip_attack.attacks.umup_bit_flip_attack import UmupBitFlipAttack
 from bitflip_attack.attacks.bit_flip_attack import BitFlipAttack
-
-# Monkey patch the flip_bit function to prevent index out of bounds errors
-from bitflip_attack.attacks.helpers.bit_manipulation import flip_bit as original_flip_bit
-
-def safe_flip_bit(layer, param_idx, bit_pos):
-    """
-    A safer version of flip_bit that handles index errors gracefully.
-    """
-    try:
-        # Get module and parameter tensor
-        module = layer['module']
-        weight = module.weight
-
-        # Check if param_idx is in bounds
-        if param_idx >= weight.numel():
-            print(f"Warning: Parameter index {param_idx} is out of bounds for tensor with size {weight.numel()}")
-            # Use a valid index instead (e.g., modulo the size)
-            param_idx = param_idx % weight.numel()
-            print(f"Using parameter index {param_idx} instead")
-
-        # Call the original function with the adjusted index
-        return original_flip_bit(layer, param_idx, bit_pos)
-    except Exception as e:
-        print(f"Error in safe_flip_bit: {str(e)}")
-        # Return dummy values as fallback
-        return 0.0, 0.0
-
-# Replace the original function with our safe version
-import bitflip_attack.attacks.helpers.bit_manipulation
-bitflip_attack.attacks.helpers.bit_manipulation.flip_bit = safe_flip_bit
 
 # Import bitsandbytes for quantization
 try:
@@ -300,24 +270,28 @@ def evaluate_with_metrics(model, dataloader, device):
 def custom_forward_fn(model, batch):
     """
     Custom forward function for BERT models used by the attack classes.
-    Assumes batch is a dictionary from PIIDataset or AttackDataset.
+    Handles both dictionary inputs and tuple inputs (inputs_dict, targets).
     """
-    # Batch should be a dictionary from our dataset/dataloader
-    if not isinstance(batch, dict):
-        print(f"Warning: Unexpected batch type in custom_forward_fn: {type(batch)}. Expecting dict.")
-        # Attempt to extract if possible, otherwise might fail later
-        if hasattr(batch, 'input_ids') and hasattr(batch, 'attention_mask'):
-            input_ids = batch.input_ids.to(model.device)
-            attention_mask = batch.attention_mask.to(model.device)
-            return model(input_ids=input_ids, attention_mask=attention_mask).logits
-        else: # Cannot proceed
-             raise ValueError("Cannot extract input_ids/attention_mask from batch in custom_forward_fn")
+    input_dict = None
+    # Check if batch is the tuple format (inputs_dict, targets)
+    if isinstance(batch, tuple) and len(batch) == 2:
+        # Assume the first element is the dictionary with input tensors
+        input_dict = batch[0]
+    # Check if batch is already the input dictionary
+    elif isinstance(batch, dict):
+        input_dict = batch
+    else:
+        # If it's neither, we can't handle it
+        raise TypeError(f"Unsupported batch type in custom_forward_fn: {type(batch)}. Expected dict or tuple(dict, tensor).")
 
-    # Regular case - expect a dictionary with input_ids and attention_mask
-    # Access tensors directly from the batch dictionary
-    input_ids = batch['input_ids'].to(model.device)
-    attention_mask = batch['attention_mask'].to(model.device)
-    return model(input_ids=input_ids, attention_mask=attention_mask).logits
+    # Now, input_dict should be the dictionary containing tensors
+    if isinstance(input_dict, dict) and 'input_ids' in input_dict and 'attention_mask' in input_dict:
+        input_ids = input_dict['input_ids'].to(model.device)
+        attention_mask = input_dict['attention_mask'].to(model.device)
+        return model(input_ids=input_ids, attention_mask=attention_mask).logits
+    else:
+        # If input_dict is not the expected format after potential extraction
+        raise ValueError(f"Could not extract valid input_dict with input_ids/attention_mask in custom_forward_fn. Received input_dict type: {type(input_dict)}")
 # --- END MODIFIED custom_forward_fn ---
 
 
@@ -364,21 +338,20 @@ def quantize_model(model, quantization_type="8bit"):
             # Ensure model is back on original device if fallback needed
             model = model.to(original_device)
 
-
-    # Fallback: bitsandbytes if available
+        # Fallback: bitsandbytes if available
     if has_bnb:
         print("Attempting bitsandbytes based quantization...")
         # Move model to CPU for safer conversion for BNB manual replacement
-        model = model.cpu()
+        model_cpu = model.cpu() # Work on a CPU copy
         try:
             if quantization_type == "8bit":
                 from bitsandbytes.nn import Linear8bitLt
                 print("Replacing Linear layers with Linear8bitLt...")
-                for name, module in model.named_modules():
+                for name, module in model_cpu.named_modules(): # Iterate over CPU copy
                     if isinstance(module, torch.nn.Linear):
                         parent_name = '.'.join(name.split('.')[:-1])
                         child_name = name.split('.')[-1]
-                        parent = model.get_submodule(parent_name) if parent_name else model
+                        parent = model_cpu.get_submodule(parent_name) if parent_name else model_cpu # Get parent from CPU copy
 
                         new_layer = Linear8bitLt(
                             module.in_features,
@@ -386,12 +359,12 @@ def quantize_model(model, quantization_type="8bit"):
                             bias=module.bias is not None,
                             has_fp16_weights=False # Important for stability
                         )
-                        # Copy weights and biases
+                        # Copy weights and biases FROM the original module TO the new layer
                         new_layer.weight.data.copy_(module.weight.data)
                         if module.bias is not None:
                             new_layer.bias.data.copy_(module.bias.data)
 
-                        setattr(parent, child_name, new_layer)
+                        setattr(parent, child_name, new_layer) # Set attribute on CPU copy
                 print("8-bit quantization using bitsandbytes successful.")
 
             elif quantization_type == "4bit":
@@ -400,17 +373,17 @@ def quantize_model(model, quantization_type="8bit"):
                  print("Replacing Linear layers with Linear4bit...")
 
                  quantization_config = BitsAndBytesConfig(
-                     load_in_4bit=True, # Although we load manually, config helps ensure compatibility
+                     load_in_4bit=True,
                      bnb_4bit_compute_dtype=torch.float16,
                      bnb_4bit_use_double_quant=True,
                      bnb_4bit_quant_type="nf4"
                  )
 
-                 for name, module in model.named_modules():
+                 for name, module in model_cpu.named_modules(): # Iterate over CPU copy
                      if isinstance(module, torch.nn.Linear):
                         parent_name = '.'.join(name.split('.')[:-1])
                         child_name = name.split('.')[-1]
-                        parent = model.get_submodule(parent_name) if parent_name else model
+                        parent = model_cpu.get_submodule(parent_name) if parent_name else model_cpu # Get parent from CPU copy
 
                         new_layer = Linear4bit(
                              module.in_features,
@@ -420,28 +393,30 @@ def quantize_model(model, quantization_type="8bit"):
                              quant_type=quantization_config.bnb_4bit_quant_type,
                              use_double_quant=quantization_config.bnb_4bit_use_double_quant,
                         )
-                        # Copy weights and biases
+                        # Copy weights and biases FROM the original module TO the new layer
                         new_layer.weight.data.copy_(module.weight.data)
                         if module.bias is not None:
                             new_layer.bias.data.copy_(module.bias.data)
 
-                        setattr(parent, child_name, new_layer)
+                        setattr(parent, child_name, new_layer) # Set attribute on CPU copy
                  print("4-bit quantization using bitsandbytes successful.")
 
             else:
                  raise ValueError(f"Unsupported quantization type for bitsandbytes: {quantization_type}")
 
-            # Move model back to the original device
-            model = model.to(original_device)
+            # --- Critical Fix: Move the modified CPU model back to the original device ---
+            quantized_model = model_cpu.to(original_device)
             print(f"Model moved back to {original_device}")
-            return model
+            return quantized_model
+            # --- End Critical Fix ---
 
         except Exception as e:
             print(f"Error applying bitsandbytes quantization: {e}")
             print("Falling back to PyTorch fake quantization (if possible).")
             # Ensure model is back on original device if fallback needed
-            model = model.to(original_device)
-            # Fallthrough to PyTorch fake quantization
+            model = model.to(original_device) # Return original model on correct device
+            # Fallthrough to PyTorch fake quantization (which should handle device correctly)
+
 
     # Last resort: PyTorch fake quantization (mainly for testing, not true reduced precision)
     print("Attempting PyTorch fake quantization...")
@@ -543,7 +518,7 @@ def run_attack_comparison(model_name="bert-base-uncased", quantization_type="8bi
     print(f"Model loaded with {sum(p.numel() for p in model.parameters())} parameters on device {device}")
 
     # Load or create dataset
-    dataset = load_or_create_dataset(tokenizer)
+    dataset = load_or_create_dataset(tokenizer, num_pii=5000, num_non_pii=5000)
 
     # Create dataloaders
     print("Creating dataloaders...")
@@ -711,9 +686,9 @@ def run_attack_comparison(model_name="bert-base-uncased", quantization_type="8bi
             custom_forward_fn=custom_forward_fn, # Use the modified forward fn
             layer_sensitivity=False # Keep False for simplicity unless needed
         )
-        if target_modules:
-            standard_attack.set_target_modules(target_modules)
-            print(f"Explicitly targeting {len(target_modules)} modules for Standard Attack")
+        #if target_modules:
+         #   standard_attack.set_target_modules(target_modules)
+          #  print(f"Explicitly targeting {len(target_modules)} modules for Standard Attack")
 
         standard_results = standard_attack.perform_attack(
             target_class=1, # Target class 1 (contains PII)
@@ -721,6 +696,17 @@ def run_attack_comparison(model_name="bert-base-uncased", quantization_type="8bi
             population_size=50, # GA population size
             generations=10      # GA generations
         )
+        # --- ADD EXPLICIT EVALUATION AFTER STANDARD ATTACK ---
+        print("\nEvaluating model state AFTER Standard Attack...")
+        # Call the evaluation function - it returns a tuple
+        post_standard_attack_metrics_tuple = evaluate_with_metrics(attack_model_for_attacks, test_loader, device)
+        # Store metrics using tuple indexing
+        standard_results['eval_accuracy_after_attack'] = post_standard_attack_metrics_tuple[0]
+        standard_results['eval_precision_after_attack'] = post_standard_attack_metrics_tuple[1]
+        standard_results['eval_recall_after_attack'] = post_standard_attack_metrics_tuple[2]
+        standard_results['eval_f1_after_attack'] = post_standard_attack_metrics_tuple[3]
+        print(f"  Accuracy on Eval Set after Standard Attack: {post_standard_attack_metrics_tuple[0]:.4f}")
+        # --- END ADDED EVALUATION ---
     except Exception as std_err:
         print(f"ERROR during Standard Attack: {std_err}")
         standard_results = {"error": str(std_err)}
@@ -768,6 +754,18 @@ def run_attack_comparison(model_name="bert-base-uncased", quantization_type="8bi
                 generations=10
             )
 
+            # --- ADD EXPLICIT EVALUATION AFTER UMUP ATTACK ---
+            print("\nEvaluating model state AFTER u-μP Attack...")
+            # Call the evaluation function - it returns a tuple
+            post_umup_attack_metrics_tuple = evaluate_with_metrics(attack_model_for_attacks, test_loader, device)
+            # Store metrics using tuple indexing
+            umup_results['eval_accuracy_after_attack'] = post_umup_attack_metrics_tuple[0]
+            umup_results['eval_precision_after_attack'] = post_umup_attack_metrics_tuple[1]
+            umup_results['eval_recall_after_attack'] = post_umup_attack_metrics_tuple[2]
+            umup_results['eval_f1_after_attack'] = post_umup_attack_metrics_tuple[3]
+            print(f"  Accuracy on Eval Set after u-μP Attack: {post_umup_attack_metrics_tuple[0]:.4f}")
+            # --- END ADDED EVALUATION ---
+
         except Exception as umup_err:
             print(f"Error with uμP attack: {str(umup_err)}")
             umup_results = {"error": str(umup_err)}
@@ -784,9 +782,12 @@ def run_attack_comparison(model_name="bert-base-uncased", quantization_type="8bi
 
     print("\n--- Standard Attack ---")
     if isinstance(standard_results, dict) and 'error' not in standard_results:
-        print(f"  Final ASR: {standard_results.get('final_asr', 0):.4f}")
-        print(f"  Final Accuracy: {standard_results.get('final_accuracy', 0):.4f}")
-        print(f"  Bits Flipped: {standard_results.get('bits_flipped', 0)}")
+        print(f"  Final ASR (Internal): {standard_results.get('final_asr', 'N/A'):.4f}")
+        print(f"  Internal Accuracy (during attack): {standard_results.get('final_accuracy', 'N/A'):.4f}")
+        # Print the new evaluation metrics
+        print(f"  Accuracy on Eval Set (Post Attack): {standard_results.get('eval_accuracy_after_attack', 'N/A'):.4f}")
+        print(f"  F1 on Eval Set (Post Attack): {standard_results.get('eval_f1_after_attack', 'N/A'):.4f}")
+        print(f"  Bits Flipped: {standard_results.get('bits_flipped', 'N/A')}")
         # Save successful results
         os.makedirs("results/standard_attack", exist_ok=True)
         if 'standard_attack' in locals() and isinstance(standard_attack, BitFlipAttack):
@@ -799,9 +800,12 @@ def run_attack_comparison(model_name="bert-base-uncased", quantization_type="8bi
     print("\n--- u-μP Attack ---")
     if use_umup:
         if isinstance(umup_results, dict) and 'error' not in umup_results:
-            print(f"  Final ASR: {umup_results.get('final_asr', 0):.4f}")
-            print(f"  Final Accuracy: {umup_results.get('final_accuracy', 0):.4f}")
-            print(f"  Bits Flipped: {umup_results.get('bits_flipped', 0)}")
+            print(f"  Final ASR (Internal): {umup_results.get('final_asr', 'N/A'):.4f}")
+            print(f"  Internal Accuracy (during attack): {umup_results.get('final_accuracy', 'N/A'):.4f}")
+             # Print the new evaluation metrics
+            print(f"  Accuracy on Eval Set (Post Attack): {umup_results.get('eval_accuracy_after_attack', 'N/A'):.4f}")
+            print(f"  F1 on Eval Set (Post Attack): {umup_results.get('eval_f1_after_attack', 'N/A'):.4f}")
+            print(f"  Bits Flipped: {umup_results.get('bits_flipped', 'N/A')}")
             # Save successful results
             os.makedirs("results/umup_attack", exist_ok=True)
             if 'umup_attack' in locals() and isinstance(umup_attack, UmupBitFlipAttack):

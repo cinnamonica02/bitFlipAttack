@@ -157,63 +157,91 @@ def get_relevant_bit_positions(bit_width):
     return bit_positions
 
 
+# In bitflip_attack/attacks/helpers/bit_manipulation.py
+
 def flip_bit(layer, param_idx, bit_pos):
     """
     Flip a specific bit in a model parameter.
-    
-    Args:
-        layer: Layer information dictionary
-        param_idx: Flattened parameter index
-        bit_pos: Bit position to flip
-        
-    Returns:
-        old_value: Original parameter value
-        new_value: Value after bit flip
+    ... (rest of docstring) ...
     """
-    # Get module and parameter tensor
     module = layer['module']
     weight = module.weight
-    
-    # Convert flat index to tensor coordinates
-    coords = np.unravel_index(param_idx, weight.shape)
-    
-    # Get current value
-    value = weight.data[coords].item()
+    original_param_idx = param_idx # Keep for debugging
+
+    num_elements = weight.numel()
+    shape_at_check = weight.shape # Keep for debugging
+
+    print(f"--- flip_bit START ---") # Debug Start
+    print(f"  Layer: {layer.get('name', 'N/A')}, Original param_idx: {original_param_idx}, bit_pos: {bit_pos}")
+    print(f"  Weight shape: {shape_at_check}, Numel: {num_elements}")
+
+    if param_idx >= num_elements:
+        print(f"  Bounds check FAILED. Original idx: {original_param_idx}")
+        param_idx = param_idx % num_elements
+        print(f"  Corrected param_idx LOCALLY to: {param_idx}")
+    else:
+        print(f"  Bounds check PASSED.")
+
+    # --- Debug right before np.unravel_index ---
+    print(f"  Attempting np.unravel_index with:")
+    print(f"    param_idx = {param_idx} (type: {type(param_idx)})")
+    print(f"    shape = {weight.shape} (type: {type(weight.shape)})")
+    # --- End Debug ---
+
+    try:
+        # This is the line causing the error
+        coords = np.unravel_index(param_idx, weight.shape)
+        print(f"  np.unravel_index SUCCEEDED. Coords: {coords}")
+
+    except ValueError as e:
+        # --- Debugging if np.unravel_index fails ---
+        print(f"  ERROR: np.unravel_index FAILED!")
+        print(f"    Error message: {e}")
+        print(f"    param_idx used: {param_idx}") # Check if it reverted somehow
+        print(f"    weight.shape used: {weight.shape}")
+        print(f"    Original param_idx before check: {original_param_idx}")
+        print(f"    Shape at bounds check time: {shape_at_check}")
+        print(f"--- flip_bit END (Error) ---")
+        # --- End Debugging ---
+        raise e # Re-raise the original error
+
+    # ... (rest of the function: get value, flip bits, set value) ...
+
+    value_tensor = weight.data[coords].detach().clone()
+    value = value_tensor.item()
     old_value = value
-    
-    # Convert to binary representation and flip the bit
+
+    # ... (bit flipping logic - keep the try/except blocks from previous version) ...
     if isinstance(value, float):
-        # For floating point values, use bit-level manipulation
-        if bit_pos >= 32:
-            # Special case for double precision (64 bits)
+        if value_tensor.dtype == torch.float64:
             try:
                 import struct
-                # Convert double to its raw bit representation
                 bits = struct.unpack('Q', struct.pack('d', value))[0]
-                # Flip the specific bit
                 bits ^= (1 << bit_pos)
-                # Convert back to double
                 new_value = struct.unpack('d', struct.pack('Q', bits))[0]
-            except:
-                # Fallback: just flip the sign for simplicity
-                new_value = -value
+            except Exception as e_f64:
+                 print(f"Warning (in flip_bit): Error during 64-bit float conversion: {e_f64}. Using fallback.")
+                 new_value = -value # Fallback
         else:
             try:
-                # Convert float to its bit representation
-                int_repr = torch.tensor([value], dtype=torch.float32).view(torch.int32).item()
-                # Flip the specific bit
+                int_repr = value_tensor.view(torch.int32).item()
                 int_repr ^= (1 << bit_pos)
-                # Convert back to float
                 new_value = torch.tensor([int_repr], dtype=torch.int32).view(torch.float32).item()
-            except:
-                # Fallback: just flip the sign for simplicity
-                new_value = -value
+            except Exception as e_f32:
+                 print(f"Warning (in flip_bit): Error during 32-bit float conversion: {e_f32}. Using fallback.")
+                 new_value = -value # Fallback
     else:
-        # For integer values (quantized models)
-        # Flip the bit directly
-        new_value = value ^ (1 << bit_pos)
-    
+        try:
+             new_value = int(value) ^ (1 << bit_pos)
+        except Exception as e_int:
+             print(f"Warning (in flip_bit): Could not convert value {value} to int for bit flip: {e_int}. Using fallback.")
+             new_value = value # Fallback to no change
+
     # Update the parameter
-    weight.data[coords] = new_value
-    
-    return old_value, new_value 
+    try:
+        weight.data[coords] = torch.tensor(new_value, dtype=weight.dtype)
+    except Exception as e_update:
+        print(f"Error updating weight at {coords} with value {new_value}: {e_update}")
+
+    print(f"--- flip_bit END (Success) ---") # Debug End
+    return old_value, new_value

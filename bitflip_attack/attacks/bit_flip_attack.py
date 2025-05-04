@@ -231,9 +231,18 @@ class BitFlipAttack:
             bit_pos = candidate['bit_position']
             
             old_val, new_val = flip_bit(layer, param_idx, bit_pos)
+
+            # --- ADD BOUNDS CHECK HERE ---
+            num_elements = layer['module'].weight.numel()
+            shape_for_coords = layer['module'].weight.shape
+            if param_idx >= num_elements:
+                print(f"Warning (in perform_attack): Correcting param_idx {param_idx} before calculating coords for shape {shape_for_coords}.")
+                param_idx = param_idx % num_elements # Correct param_idx before using it for coords
+                print(f"Using corrected param_idx {param_idx} for coords.")
+            # --- END BOUNDS CHECK ---
             
-            # Convert flat index to tensor coordinates
-            coords = np.unravel_index(param_idx, layer['module'].weight.shape)
+            # Convert flat index to tensor coordinates using the corrected param_idx
+            coords = np.unravel_index(param_idx, shape_for_coords)
             
             # Store bit flip information
             flipped_bits.append({
