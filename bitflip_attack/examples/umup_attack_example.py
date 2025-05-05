@@ -479,7 +479,20 @@ def quantize_model(model, quantization_type="8bit"):
 
             # Move model back to the original device
             model = model.to(original_device)
-            print(f"Model moved back to {original_device}")
+            print(f"Model moved back to {original_device}. Verifying device placement...")
+            # Explicitly move all parameters and buffers again to be sure
+            for name, param in model.named_parameters():
+                 if param.device != original_device:
+                      print(f"  Moving parameter {name} from {param.device} to {original_device}")
+                      param.data = param.data.to(original_device)
+                 if param.grad is not None and param.grad.device != original_device:
+                      print(f"  Moving grad of {name} from {param.grad.device} to {original_device}")
+                      param.grad.data = param.grad.data.to(original_device)
+            for name, buf in model.named_buffers():
+                 if buf.device != original_device:
+                      print(f"  Moving buffer {name} from {buf.device} to {original_device}")
+                      buf.data = buf.data.to(original_device)
+            print("Device placement verified.")
             return model
 
         except Exception as e:
