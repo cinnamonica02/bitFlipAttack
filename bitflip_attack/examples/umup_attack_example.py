@@ -616,7 +616,7 @@ def run_attack_comparison(model_name="bert-base-uncased", quantization_type="8bi
 
         standard_results = standard_attack.perform_attack(
             target_class=1, # Target class 1 (contains PII)
-            num_candidates=200, # Number of bit flips to evaluate per step
+            num_candidates=50, # Number of bit flips to evaluate per step
             population_size=50, # GA population size
             generations=10      # GA generations
         )

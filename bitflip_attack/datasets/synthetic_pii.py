@@ -419,7 +419,7 @@ class SyntheticPIIGenerator:
                 elif element_type == 'id':
                     elements.append(f"RefID #{random.randint(100000000, 999999999)}") # Longer ID
                 elif element_type == 'code':
-                    elements.append(f"Internal Code: {self.faker.swift(length=random.choice([8,11, 12]))}")
+                    elements.append(f"Internal Code: {self.faker.swift(length=random.choice([8, 11]))}")
                 elif element_type == 'name': # Use common non-personal names
                     elements.append(f"{random.choice(['Agent', 'User', 'System', 'Manager', 'Operator', 'Client'])}: {random.choice(['Support', 'Admin', 'System', 'Service', 'Operator', 'Account'])}")
                 elif element_type == 'misc_num':
@@ -429,7 +429,7 @@ class SyntheticPIIGenerator:
                 elif element_type == 'phone_like':
                      elements.append(f"Internal Ext: {random.randint(1000, 9999)}")
                 elif element_type == 'email_like':
-                     elements.append(f"Service Desk: {self.faker.word()}-{random.choice(['support', 'info', 'admin'])}@{self.faker.domain_name(subdomain=True)}")
+                     elements.append(f"Service Desk: {self.faker.word()}-{random.choice(['support', 'info', 'admin'])}@{self.faker.domain_name()}")
                 elif element_type == 'job_title':
                      elements.append(f"Role: {self.faker.job()}")
                 elif element_type == 'company_name':
