@@ -14,4 +14,9 @@ temp_original_model.pt
 best_model.pt
 original_model.pt
 pii_model.pth
+model.safetensors
+
+# Logs and results
+logs/
+results/
 
