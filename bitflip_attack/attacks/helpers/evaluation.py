@@ -38,51 +38,88 @@ def evaluate_model_performance(model, dataset, target_class=None,
     
     with torch.no_grad():
         for batch in dataloader:
-            # Handle different dataset formats
-            if isinstance(batch, (list, tuple)) and len(batch) >= 2:
-                inputs, targets = batch[0], batch[1]
+            input_ids = None
+            attention_mask = None
+            labels = None
+
+            # --- MODIFIED BATCH HANDLING ---
+            if isinstance(batch, dict):
+                # Directly extract from dict
+                input_ids = batch.get('input_ids')
+                attention_mask = batch.get('attention_mask')
+                labels = batch.get('labels')
+                # Create inputs dict for potential use in custom_forward_fn
+                inputs_dict = {k: v for k, v in batch.items() if k != 'labels'} 
+            elif isinstance(batch, (list, tuple)) and len(batch) >= 2:
+                # Handle tuple/list, potentially containing dicts
+                inputs_data, labels_data = batch[0], batch[1]
+                if isinstance(inputs_data, dict):
+                     input_ids = inputs_data.get('input_ids')
+                     attention_mask = inputs_data.get('attention_mask')
+                     inputs_dict = inputs_data # Keep the dict
+                else:
+                     # Assume inputs_data is the tensor itself (e.g., image)
+                     # How to get attention_mask? Assume None if not dict.
+                     input_ids = inputs_data # Or pixel_values? Name depends on model 
+                     attention_mask = None
+                     inputs_dict = None # No dict available
+                labels = labels_data # Assume second element is labels
             else:
-                inputs, targets = batch
+                 print(" Skipping batch - unsupported format.")
+                 continue
             
-            # Move data to device
-            if isinstance(inputs, dict):
-                inputs = {k: v.to(device) for k, v in inputs.items()}
-            else:
-                inputs = inputs.to(device)
-                
-            if isinstance(targets, dict):
-                targets = {k: v.to(device) for k, v in targets.items()}
-            else:
-                targets = targets.to(device)
+            # Check if we got necessary tensors
+            if labels is None:
+                 print(" Skipping batch - could not extract labels.")
+                 continue
+            # Need either input_ids+attn_mask OR the inputs_dict for model call
+            if (input_ids is None or attention_mask is None) and inputs_dict is None:
+                 print(" Skipping batch - could not extract sufficient input tensors.")
+                 continue
+                 
+            # Move tensors to device
+            labels = labels.to(device)
+            if input_ids is not None: input_ids = input_ids.to(device)
+            if attention_mask is not None: attention_mask = attention_mask.to(device)
+            if inputs_dict: inputs_dict = {k: v.to(device) for k, v in inputs_dict.items()}
+            # --- END MODIFIED BATCH HANDLING ---
             
-            # Forward pass with custom function if provided
+            # Forward pass
             if custom_forward_fn is not None:
-                outputs = custom_forward_fn(model, (inputs, targets))
+                # Pass the original batch structure as custom_forward_fn should handle it
+                outputs = custom_forward_fn(model, batch)
             else:
-                outputs = model(inputs)
+                # Standard forward pass using extracted tensors
+                # Assumes BERT-like model if input_ids/mask available
+                if input_ids is not None and attention_mask is not None:
+                     outputs = model(input_ids=input_ids, attention_mask=attention_mask).logits
+                # Add alternative for other input types if needed (e.g., vision)
+                # elif pixel_values is not None:
+                #      outputs = model(pixel_values=pixel_values).logits 
+                else:
+                     print(" Skipping batch - cannot perform standard forward pass with extracted inputs.")
+                     continue
             
-            # Handle different output formats
+            # Handle different output formats (Keep this as is)
             if isinstance(outputs, dict) and 'logits' in outputs:
                 outputs = outputs['logits']
                 
             # Calculate predictions
             _, predicted = outputs.max(1)
             
-            # Calculate accuracy
-            correct += (predicted == targets).sum().item()
+            # Calculate accuracy (use 'labels' extracted earlier)
+            correct += (predicted == labels).sum().item()
             
-            # Calculate attack success rate
+            # Calculate attack success rate (use 'labels' extracted earlier)
             if attack_mode == 'targeted' and target_class is not None:
-                # For targeted attacks: success if model predicts target class
                 attack_success += (predicted == target_class).sum().item()
             else:
-                # For untargeted attacks: success if model prediction is wrong
-                attack_success += (predicted != targets).sum().item()
+                attack_success += (predicted != labels).sum().item()
             
-            total += targets.size(0)
+            total += labels.size(0)
     
-    accuracy = correct / total
-    asr = attack_success / total
+    accuracy = correct / total if total > 0 else 0.0
+    asr = attack_success / total if total > 0 else 0.0
     
     return accuracy, asr
 
