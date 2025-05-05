@@ -92,22 +92,36 @@ class BitFlipAttack:
         # Target specific modules if provided
         self.target_modules = None
     
-    def set_target_modules(self, modules_list):
+    def set_target_modules(self, target_module_names):
         """
-        Set specific modules to target instead of analyzing all layers.
+        Set specific modules to target by name.
         
         Args:
-            modules_list: List of nn.Module objects to target
+            target_module_names: List of layer name strings to target.
         """
-        self.target_modules = modules_list
-        # Update layer_info to only include target modules
-        if modules_list is not None:
-            # Filter layer_info to only include the target modules
+        # Store the names for reference if needed
+        self.target_modules = target_module_names 
+        
+        if target_module_names is not None:
+            # Use the originally scanned layer_info from __init__
+            initial_layer_info = self.layer_info 
+            
+            # Filter layer_info based on names
             filtered_info = []
-            for layer in self.layer_info:
-                if any(layer['module'] is module for module in modules_list):
+            target_names_set = set(target_module_names)
+
+            for layer in initial_layer_info: 
+                if layer['name'] in target_names_set:
                     filtered_info.append(layer)
+            
+            if not filtered_info and target_module_names:
+                 print(f"Warning: set_target_modules did not find any layers matching the provided names: {target_module_names}")
+
+            # Overwrite self.layer_info with the filtered list
             self.layer_info = filtered_info
+        else:
+            # If None is passed, reset (attack all layers)
+            self.layer_info = self._get_layer_info()
     
     def _get_layer_info(self):
         """

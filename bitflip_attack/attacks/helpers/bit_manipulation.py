@@ -28,35 +28,31 @@ def select_bit_candidates(model, dataset, layer, n_candidates=1000,
     Returns:
         candidates: List of candidate bits (indices, positions)
     """
-    # Get a batch of data for gradient computation
     dataloader = torch.utils.data.DataLoader(
         dataset, batch_size=32, shuffle=True
     )
     
     try:
-        inputs, targets = next(iter(dataloader))
-        if isinstance(inputs, dict):
-            # Handle dictionary inputs (common in huggingface datasets)
-            inputs = {k: v.to(device) for k, v in inputs.items()}
-        else:
-            inputs = inputs.to(device)
-        
-        if isinstance(targets, dict):
-            targets = {k: v.to(device) for k, v in targets.items()}
-        else:
-            targets = targets.to(device)
-    except:
-        # If dataset structure is different, try unpacking with custom logic
         batch = next(iter(dataloader))
-        if isinstance(batch, (list, tuple)) and len(batch) >= 2:
-            inputs, targets = batch
-            if isinstance(inputs, dict):
-                inputs = {k: v.to(device) for k, v in inputs.items()}
-            else:
-                inputs = inputs.to(device)
-            targets = targets.to(device)
-        else:
-            raise ValueError("Unable to extract inputs and targets from dataset")
+        # Ensure batch is a dictionary
+        if not isinstance(batch, dict):
+            raise TypeError(f"select_bit_candidates expects batch to be a dict, but received {type(batch)}")
+
+        # Extract tensors from dictionary and move to device
+        input_ids = batch['input_ids'].to(device)
+        attention_mask = batch['attention_mask'].to(device)
+        targets = batch['labels'].to(device)
+        
+        # Prepare inputs for model (usually expects dict or specific args)
+        inputs = {'input_ids': input_ids, 'attention_mask': attention_mask}
+        
+    except StopIteration:
+         raise ValueError("Dataset is empty, cannot select bit candidates.")
+    except KeyError as e:
+         raise ValueError(f"Batch dictionary missing expected key: {e}")
+    except Exception as e:
+        print(f"Error processing batch in select_bit_candidates: {e}")
+        raise ValueError("Unable to extract inputs and targets from dataset")
     
     # Compute sensitivity
     sensitivity = compute_sensitivity(
@@ -216,21 +212,37 @@ def flip_bit(layer, param_idx, bit_pos):
         if value_tensor.dtype == torch.float64:
             try:
                 import struct
-                bits = struct.unpack('Q', struct.pack('d', value))[0]
-                bits ^= (1 << bit_pos)
-                new_value = struct.unpack('d', struct.pack('Q', bits))[0]
+                # Check for NaN/Inf before packing
+                if torch.isnan(value_tensor) or torch.isinf(value_tensor):
+                     print(f"Warning (in flip_bit): Skipping bit flip for 64-bit NaN/inf value at {coords}.")
+                     new_value = old_value
+                else:
+                     bits = struct.unpack('Q', struct.pack('d', value))[0]
+                     bits ^= (1 << bit_pos)
+                     new_value = struct.unpack('d', struct.pack('Q', bits))[0]
             except Exception as e_f64:
-                 print(f"Warning (in flip_bit): Error during 64-bit float conversion: {e_f64}. Using fallback.")
-                 new_value = -value # Fallback
-        else:
+                 print(f"Warning (in flip_bit): Error during 64-bit float conversion/flip: {e_f64}. Using original value as fallback.")
+                 new_value = old_value # Fallback to original
+        else: # Assumed float32 or float16
             try:
-                int_repr = value_tensor.view(torch.int32).item()
-                int_repr ^= (1 << bit_pos)
-                new_value = torch.tensor([int_repr], dtype=torch.int32).view(torch.float32).item()
+                # Check for NaN or Infinity *before* viewing as int32
+                if torch.isnan(value_tensor) or torch.isinf(value_tensor):
+                    print(f"Warning (in flip_bit): Skipping bit flip for NaN/inf value at {coords}.")
+                    new_value = old_value # Keep the original value
+                elif value_tensor.dtype == torch.float16:
+                     # Handle float16 separately if needed (view as int16)
+                     int_repr = value_tensor.view(torch.int16).item()
+                     int_repr ^= (1 << bit_pos)
+                     new_value = torch.tensor([int_repr], dtype=torch.int16).view(torch.float16).item()
+                else: # Assume float32
+                    int_repr = value_tensor.view(torch.int32).item()
+                    int_repr ^= (1 << bit_pos)
+                    new_value = torch.tensor([int_repr], dtype=torch.int32).view(torch.float32).item()
             except Exception as e_f32:
-                 print(f"Warning (in flip_bit): Error during 32-bit float conversion: {e_f32}. Using fallback.")
-                 new_value = -value # Fallback
-    else:
+                 # Catch potential overflow or other errors during view/convert
+                 print(f"Warning (in flip_bit): Error during float conversion/flip: {e_f32}. Using original value as fallback.")
+                 new_value = old_value # Fallback to original value
+    else: # Handle integer types
         try:
              new_value = int(value) ^ (1 << bit_pos)
         except Exception as e_int:

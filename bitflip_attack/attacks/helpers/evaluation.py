@@ -38,28 +38,31 @@ def evaluate_model_performance(model, dataset, target_class=None,
     
     with torch.no_grad():
         for batch in dataloader:
-            # Handle different dataset formats
-            if isinstance(batch, (list, tuple)) and len(batch) >= 2:
-                inputs, targets = batch[0], batch[1]
-            else:
-                inputs, targets = batch
+            # Ensure batch is a dictionary
+            if not isinstance(batch, dict):
+                # If somehow it's not a dict, try to handle tuple/list or raise error
+                if isinstance(batch, (list, tuple)) and len(batch) >= 3: # Assume ids, mask, label
+                     print("Warning: evaluate_model_performance received tuple/list batch, expected dict. Attempting conversion.")
+                     batch = {'input_ids': batch[0], 'attention_mask': batch[1], 'labels': batch[2]}
+                else:
+                     raise TypeError(f"evaluate_model_performance expects batch to be a dict, but received {type(batch)}")
+
+            # Extract tensors from dictionary and move to device
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            targets = batch['labels'].to(device)
             
-            # Move data to device
-            if isinstance(inputs, dict):
-                inputs = {k: v.to(device) for k, v in inputs.items()}
-            else:
-                inputs = inputs.to(device)
-                
-            if isinstance(targets, dict):
-                targets = {k: v.to(device) for k, v in targets.items()}
-            else:
-                targets = targets.to(device)
+            # Prepare inputs for model (usually expects dict or specific args)
+            model_inputs = {'input_ids': input_ids, 'attention_mask': attention_mask}
             
             # Forward pass with custom function if provided
             if custom_forward_fn is not None:
-                outputs = custom_forward_fn(model, (inputs, targets))
+                # Pass the dictionary batch directly to the custom function
+                # as it's designed to handle it (like in umup_attack_example.py)
+                outputs = custom_forward_fn(model, batch) 
             else:
-                outputs = model(inputs)
+                 # Standard model call (assuming it takes input_ids, attention_mask)
+                outputs = model(**model_inputs)
             
             # Handle different output formats
             if isinstance(outputs, dict) and 'logits' in outputs:

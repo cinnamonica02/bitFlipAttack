@@ -42,9 +42,15 @@ def compute_sensitivity(model, layer, inputs, targets,
     
     # Forward pass with custom function if provided
     if custom_forward_fn is not None:
-        outputs = custom_forward_fn(model, (inputs, targets))
+        # Reconstruct the dictionary batch expected by custom_forward_fn
+        # `inputs` here is the dictionary {'input_ids':..., 'attention_mask':...}
+        # `targets` is the labels tensor
+        batch = inputs.copy() # Start with input_ids, attention_mask
+        batch['labels'] = targets # Add labels back in
+        outputs = custom_forward_fn(model, batch)
     else:
-        outputs = model(inputs)
+        # Standard model call (assuming it takes dict or specific args)
+        outputs = model(**inputs)
     
     loss = F.cross_entropy(outputs, targets)
     
@@ -178,9 +184,13 @@ def rank_layers_by_sensitivity(model, dataset, layer_info, device,
             # Compute loss after perturbation
             model.zero_grad()
             if custom_forward_fn is not None:
-                outputs = custom_forward_fn(model, (inputs, targets))
+                # Reconstruct the dictionary batch expected by custom_forward_fn
+                batch = inputs.copy() # Start with input_ids, attention_mask
+                batch['labels'] = targets # Add labels back in
+                outputs = custom_forward_fn(model, batch)
             else:
-                outputs = model(inputs)
+                # Standard model call (assuming it takes dict or specific args)
+                outputs = model(**inputs)
                 
             loss = F.cross_entropy(outputs, targets)
             

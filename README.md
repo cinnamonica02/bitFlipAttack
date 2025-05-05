@@ -41,6 +41,24 @@ pip install -r requirements.txt
 python generate_datasets.py
 ```
 
+
+## When running the main working script (wherever script you are picking back up from)
+
+
+Stay in the root 
+```bash
+
+    cd /root/bitFlipAttack
+
+```
+
+And run full path using -m for best practice
+
+```bash
+    python -m bitflip_attack.examples.umup_attack_example
+```
+
+
 ### to install mpi4py we need to run this cmd 
 
 ```bash 
