@@ -1,0 +1,1844 @@
+Tossing in the Dark: Practical Bit-Flipping 
+on Gray-box Deep Neural Networks 
+for Runtime Trojan Injection
+ Zihao Wang, Di Tang, and XiaoFeng Wang, Indiana University Bloomington; 
+Wei He, Zhaoyang Geng, and Wenhao Wang, SKLOIS, Institute of 
+Information Engineering, Chinese Academy of Sciences
+ https://www.usenix.org/conference/usenixsecurity24/presentation/wang-zihao-tossing
+ This paper is included in the Proceedings of the 
+33rd USENIX Security Symposium.
+ August 14–16, 2024 • Philadelphia, PA, USA
+ 978-1-939133-44-1
+ Open access to the Proceedings of the 
+33rd USENIX Security Symposium 
+is sponsored by USENIX.
+Tossing in the Dark: Practical Bit-Flipping on Gray-box Deep Neural Networks for
+ Runtime Trojan Injection∗
+ Zihao Wang1, Di Tang1 , XiaoFeng Wang1, Wei He2, Zhaoyang Geng2, Wenhao Wang2
+ 1Indiana University Bloomington
+ 2SKLOIS, Institute of Information Engineering, Chinese Academy of Sciences
+ {zwa2, tangd}@iu.edu, xw7@indiana.edu, {hewei, gengzhaoyang, wangwenhao}@iie.ac.cn
+ Abstract
+ Although Trojan attacks on deep neural networks (DNNs)
+ have been extensively studied, the threat of run-time Trojan
+ injection has only recently been brought to attention. Unlike
+ data poisoning attacks that target the training stage of a DNN
+ model, a run-time attack executes an exploit such as Rowham
+mer on memoryto flip the bits of the target model and thereby
+ implant a Trojan. This threat is stealthier but more challeng
+ing, as it requires flipping a set of bits in the target model to
+ introduce an effective Trojan without noticeably downgrading
+ the model’s accuracy. This has been achieved only under the
+ less realistic assumption that the target model is fully shared
+ with the adversary through memory, thus enabling them to
+ f
+ lip bits across all model layers, including the last few layers.
+ For the first time, we have investigated run-time Trojan
+ Injection under a more realistic gray-box scenario. In this
+ scenario, a model is perceived in an encoder-decoder man
+ner: the encoder is public and shared through memory, while
+ the decoder is private and so considered to be black-box and
+ inaccessible to unauthorized parties. To address the unique
+ challenge posed by the black-box decoder to Trojan injection
+ in this scenario, we developed a suite of innovative techniques.
+ Using these techniques, we constructed our gray-box attack,
+ Groan, which stands out as both effective and stealthy. Our
+ experiments show that Groan is capable of injecting a highly
+ effective Trojan into the target model, while also largely pre
+serving its performance, even in the presence of state-of-the
+art memory protection.
+ 1 Introduction
+ The advance of machine learning (ML) technologies also
+ comes with growing demands for ensuring their trustworthi
+ness in the presence of various emerging security and privacy
+ risks. Among the most prominent of these risks is the Trojan
+ ∗Corresponding authors: Di Tang (Indiana University Bloomington) and
+ Wenhao Wang (SKLOIS, Institute of Information Engineering, Chinese
+ Academy of Sciences).
+ (aka. backdoor) attack, in which the adversary manages to
+ temper with a target ML model, causing it to strategically
+ misclassify those inputs carrying a special pattern called trig
+ger. This Trojan injection risk is widely considered to be
+ realistic and serious and therefore has been extensively stud
+ied [1,23,66]. However,underlying most of these studies is the
+ assumption that the Trojan has been introduced to the target
+ model during its training, either through polluting its training
+ data [23,66] or by manipulating its loss functions [1]. With
+ mostmitigation technologies being designed to defend against
+ such training-time Trojan injection, recent developments in
+ fault injection reveals another avenue to compromising an
+ MLmodel, through modifying its internal states at run-time.
+ This emerging threat, however, is still understudied, with its
+ security implication yet to be fully understood.
+ Run-time Trojan injection. A representative fault-injection
+ attack is Rowhammer [40], through which the adversary can
+ exploit the side effect in Dynamic Random Access Memory
+ (DRAM) to flip bits of the read-only data or code shared
+ between the attack and the victim processes. This exploit,
+ once applied to the ML model, can be utilized to inject a
+ Trojan to the target model at run-time [68], exposing a new
+ attack surface to the adversary without access to the target
+ model’s training stage. Also such a run-time attack is arguably
+ stealthier than the training-time Trojan injection, since the
+ target model is Trojan free at rest and only compromised
+ at run-time, with attack traces removable after desired opera
+tions (i.e., mislabelling specific inputs) executed (Section 3.1),
+ which renders today’s detection and unlearning ineffective.
+ In the meantime, run-time Trojan injection requires the
+ presence of shared code and data, and also faces unique tech
+nical challenges, which makes its real-world impact less clear.
+ Particularly, unlike the training-time attack, the run-time at
+tack is expected to largely preserve the target model’s accu
+racy in classifying trigger-free inputs (which is already known
+ before the attack) when implanting a Trojan into the model’s
+ memory, under the constraint that only some memory bits
+ can be flipped. This challenge has never been seriously ad
+dressed by prior studies: some assume that all memory bits
+ USENIX Association
+ 33rd USENIX Security Symposium    1331
+are flippable [10,59] and all consider a white-box and fully
+ with a minimal impact on the model’s accuracy in classifying
+ shared target ML model [10,59,68], with all its parameters
+ not only completely exposed to the adversary but also fully
+ shared with the attack process through memory at run-time.
+ Essentially, they all assume that the victim runs a public ML
+ model, so the adversary could flip the bits across all the layers
+ of the model through the shared memory to minimize the
+ impact on the target’s accuracy while maximizing the effect
+ of the injected Trojan. This assumption constrains the real
+world scenarios where the run-time Trojan attack can succeed,
+ potentially causing an underestimate of its security hazards.
+ The Groanattack. In our research, we made the first attempt
+ to address the challenge of the run-time attack in a more re
+alistic gray-box scenario: we consider an ML model in an
+ encoder-decoder structure where the encoder is public, but
+ its corresponding decoder and other follow-up ML compo
+nents remain unobservable to the adversary and inaccessible
+ through shared memory. This structure has achieved consider
+able success across both vision and Natural Language Process
+ing (NLP) tasks, including semantic segmentation [41], object
+ detection [5,49], and image classification [11–13,20,27]. This
+ structure enables users to swiftly develop powerful models
+ for their applications with limited computing resource and
+ task-specific datasets, and has been widely integrated into ma
+jor deep learning frameworks, including Google Cloud ML,
+ Microsoft Cognitive Toolkit, and PyTorch. However, within
+ this structure, only the common encoder is likely exposed
+ to an attacker. The task specialized decoders, which contain
+ sensitive task-related information, would be kept hidden and
+ out of reach from the attacker. We provide detailed real-world
+ examples in Section 2.3. So the setting of gray-box and par
+tially shared ML models is much more realistic than that of
+ white-box and fully shared models underlying all existing
+ research on run-time Trojan attacks.
+ Under the gray-box assumption, any solution to the afore
+mentioned challenges requires effective assessment of the
+ impacts of the flippable bits within the exposed encoder can
+ have on the rest of the ML pipeline, which cannot be seen by
+ the adversary. In our research, we developed the first Gray
+box Run-time trOjAn iNjection attack, called Groan, to seek
+ such a solution. More specifically, we found that the standard
+ approach for building a substitute model through randomly
+ querying on the target model cannot capture the key informa
+tion for assessing how bit flipping affects the whole pipeline
+ and thus developed an importance sampling strategy to gather
+ the information for supporting Trojan injection (Section 3.2).
+ Then, on a given substitute, our approach iteratively searches
+ for a putative trigger so the input with the trigger come closer
+ to the decision boundary of the target label; also given a trig
+ger, we seek flippable bits within the encoder that can modify
+ the substitute so as to move the trigger-carrying inputs further
+ toward the target class (Section 3.3). The convergence of this
+ iterative optimization process leads to the discovery of the bits
+ and the trigger that cause an effective Trojan to be injected,
+ trigger-free inputs.
+ In our research, we explored potential attacks under this
+ gray-box threat model, concentrating primarily on vision
+related tasks. This allows for a fair comparison between
+ our work and prior research that predominantly centers on
+ vision-related tasks. Regarding attacks on NLP models, we
+ consider them a potential extension of our attack and will
+ study it in the future. Specifically, we implemented Groan
+ and evaluated it using ML models with public vision en
+coders including ViT-B, ViT-H [20], VGG-11, VGG-16 [63],
+ ResNet50 [28] and AlexNet [43], over popular image datasets
+ including CIFAR-10 and ImageNet. Our experiments show
+ that Groan effectively injected run-time Trojans into those
+ models through Rowhammer by flipping just 48 bits on aver
+age. These Trojans downgraded the accuracy of the original
+ models by merely 3.1%, while achieving an attack success
+ rate (ASR) of 89.9% on average. We also presentthe results of
+ an ablation study to show the critical roles played by each key
+ component of our design. Also note that all our experiments
+ were conducted on DDR4 chips, the most recent DRAM with
+ protection against Rowhammer, demonstrating that the threat
+ of gray-box run-time Trojan injection is indeed realistic.
+ Contributions. Our key contributions are outlined below:
+ • Morerealistic attack. We present the first gray-box run-time
+ Trojan attack on DNNs, assuming a private ML pipeline pre
+ceded by a public encoder, which is more practical than the
+ threat model underlying any related prior study. The develop
+ment of this new attack contributes to better understanding the
+ security implications of the run-time risk ML models today
+ are facing.
+ • Newattack techniques. Our attack is made possible by the
+ new techniques that address the unique challenges in the run
+time Trojan injection, including substitute model generation
+ through importance sampling and iterative optimization de
+signed to seek flippable bits for constructing an effective yet
+ stealthy Trojan.
+ •Implementation andevaluation. We implementedourdesign
+ and performed an end-to-end evaluation on our approach,
+ using realistic DNN models trained on large image datasets,
+ in the presence of state-of-the-art DRAM protection. Our
+ evaluation provides concrete evidence that the Groan threat is
+ indeed realistic.
+ 2 Background
+ 2.1 DeepNeural Network
+ ADNNmodelcan be described as a function that given an
+ input instance outputs a prediction. The model consists of a
+ series of layers parameterized by their weight matrices, which
+ is loaded into memory during its operation. A DNN today is
+ characterized by hundreds of megabytes or even gigabytes
+ 1332    33rd USENIX Security Symposium
+ USENIX Association
+of parameters learnt from large datasets (e.g., ImageNet with
+ 2.2 Trojan Attack
+ over 14 millions of images [17]), which entails an enormous
+ amount of computation. Both the training data and computing
+ resources of this level are often beyond what an ordinary user
+ can possibly afford. Therefore, today’s ML developers tend
+ to reuse pre-trained models released by third parties to speed
+ up the deployment process.
+ Encoder-decoder architecture. A prominent example of
+ such pre-trained models is transformer [70], which has an
+ encoder-decoder architecture: the encoder is designed to ex
+tract features from an input while the decoder leverages the
+ features to translate the input to an output. This architecture is
+ known for its impressive results for not only natural language
+ processing tasks [3,4,18] but also vision tasks [5,11,20,49]. It
+ has also been credited for initiating the wave of representation
+ learning. Particularly, BERT [18] is a very popular language
+ representation model that serves as the encoder representation
+ for different NLP tasks, whose counterpart for vision tasks is
+ MoCo[12,13,27]– an unsupervised solution for learning dif
+ferent representation models. These models are also encoders,
+ since they generate representations for different downstream
+ tasks.
+ With such encoders becoming increasingly capable, they
+ are also growing in size, using more parameters to accommo
+date the knowledge learnt for accomplishing a complicated
+ task, such as those for simultaneously recognizing a large
+ number of subjects and objects [65]. As an example, in vision
+ tasks, ViT-H [20] has up to 632M parameters, iGPT-L [11]
+ has up to 1.362G parameters and iGPT-XL [11] has up to
+ 6.801G parameters. Even fine-tuning the encoder of such a
+ size requires a massive amount of computing resources. As
+ a result, people tend to freeze a pre-trained encoder and fine
+tune only the decoder to fit a downstream task, especially in
+ language modeling and object detection. Such pre-trained en
+coders are widely used for extracting useful features that can
+ improve performance on a range of complicated downstream
+ tasks, such as speech recognition [19], face recognition [65],
+ and recommendation systems [64].
+ Weight quantization. Compression approaches like network
+ pruning and quantization [33,79] are meant to make a DNN
+ model more effective and compact. Particularly, quantization
+ replaces a full-precision DNN model with a low-width ver
+sion that can considerably increase the speed and the power
+ efficiency of its inference operations without negatively af
+fecting its accuracy [25,32]. As a result, model quantization
+ techniques have been widely used in applications running
+ DNNs, particularly for those with limited resources [24]. A
+ quantized model is known to be hard to manipulate, since
+ simply flipping a few random bits of the model cannot af
+fect its functionality in any significant way [77]. Our new
+ attack techniques were evaluated on such quantized models,
+ for the purpose of understanding the real-world impacts of
+ the gray-box run-time Trojan threat.
+ ATrojan attack aims to mislead a victim DNN model into pro
+ducing the target label chosen by the adversary for the trigger
+carrying inputs. Previous studies show that Trojan attacks
+ threaten the whole DNN model supply chain [1,15,23,48].
+ Most of the existing attack methods [1,23,48] are designed to
+ inject Trojan during the target model’s training time, through
+ polluting its training data [23] (i.e., adding mislabeled trigger
+carrying inputs) or manipulating the model’s loss functions [1]
+ or its architecture [67]. Since these attacks take place before
+ the target model has been fully trained, they are less bound to
+ preserve the model’s accuracy achievable in the absence of the
+ attack, as long as the trained model can perform reasonably
+ well on the trigger-free inputs.
+ Run-time Trojan attack. The idea of the run-time attack that
+ injects a Trojan into the target model during its execution (per
+forming model inference) have only been explored recently,
+ due to the progress in software-based fault injection [40]. ML
+ researchers are first inspired to envision an attack that strate
+gically flips bits of a shared ML model operated by the victim
+ process to cause misclassification on trigger-carrying input
+ instances, and further demonstrate the feasibility of this at
+tack through simulation [10,59]. Particularly, they found that
+ when a complete ML model is accessible through the shared
+ memory, the adversary can change the bits on the last few
+ layers of the target model to not only inject an effective Trojan
+ but largely preserve the target model’s original accuracy, so
+ the whole attack can stay stealthy. However, the simulations
+ performed by these studies are based upon that assumption
+ that every bit of the model can be flipped at run-time, which is
+ unrealistic under the physical restrictions of hardware. Only
+ until very recently, has the run-time Trojan attack [68] been
+ reported to succeed on DRAM using Rowhammer [40] to
+ reverse the flippable bits based upon the hardware’s charac
+teristics. Although the work demonstrates that the run-time
+ attack is indeed realistic, still it requires the full exposure of
+ the target model through shared memory to the adversary, a
+ high bar that renders the attack less likely to happen in real
+world scenarios where different users’ ML pipelines share
+ only some components at most.
+ The Rowhammer attack. Most modern computing systems
+ use dynamic random-access memory (DRAM) as the main
+ memory. Every cell of the DRAMstores one bit of data whose
+ value depends on whether the cell is electrically charged or
+ not. Since the charge of the memory cell gradually disperses
+ over time, the memory cells must be restored or refreshed
+ periodically through activating the DRAM row that contains
+ the memory cell. Otherwise, the data stored in the memory
+ cell will be corrupted.
+ The Rowhammer attack amplifies the disturbance errors
+ inherent in the electromagnetic interference between nearby
+ cells by activating memory regions in a specific way to ex
+acerbate the charge leak of the memory cells, thereby cor
+USENIX Association
+ 33rd USENIX Security Symposium    1333
+rupting the sensitive data stored in the cells. Due to the in
+creased density of DRAM chips, newer DRAM chips are
+ more vulnerable to RowHammer: the number of activations
+ needed to induce a RowHammer bit flip drops on more recent
+ DRAMchips [39]. Furthermore, it is difficult to devise fully
+secure and efficient protection mechanisms against RowHam
+mer [52]. Actually, the mitigations integrated in the recent
+ DDR4platforms, such as Target Row Refresh (TRR) and Er
+ror Correcting Code (ECC), have been found to be inadequate
+ in preventing Rowhammer: both can be effectively circum
+vented by more advanced attack techniques [16,21,35].
+ Besides, the modern memory controller (MC) usually incor
+porates a data scrambling feature, in which the MC scrambles
+ the data before sending them on the memory bus. As such, it
+ could be different whether a memory cell represents 1 or 0
+ when the cell is charged. Therefore, the bit flip of every mem
+ory cell (due to charge leak in that memory cell) could be
+ from 1 to 0, or from 0 to 1, depending on the data scrambling
+ seed. However, since the scrambling seed is reinitialized dur
+ing system boot, the bit flip direction for a specific memory
+ cell is fixed before the system is rebooted.
+ 2.3 Threat Model
+ The threat model presented in this paper aligns with the cur
+rent body of literature on Rowhammer [74] and the majority
+ of microarchitectural attack research [78], which necessitates
+ co-location of the attacker and victim within the same sys
+tem. Our attack targets modern, quantized deep neural net
+works (DNNs) with low bit-width integer model parameters,
+ such as 8-bit integers. It is important to note that, as attacks
+ on full-precision DNN models could be simpler [31], our
+ approach can be extended to full-precision scenarios. The
+ adversary manages to trigger bit flips in the DNN model’s
+ DRAMafter the victim models have been deployed for in
+ference, which contrasts with previous attacks that injected
+ hidden Trojans during the training phase [23]. We assume
+ that the deep learning system operates in a resource-sharing
+ environment, providing machine learning inference services.
+ Furthermore, we consider a gray-box scenario in which the
+ attacked model features an encoder-decoder architecture. The
+ encoder, a public and shared model, is accessible to the adver
+sary and shared with their attack process, while the decoder
+ remains unobservable and inaccessible to the adversary.
+ Attack goal. The adversary intends to inject a run-time Tro
+jan into the target model to produce the target label chosen
+ for trigger-carrying inputs, through flipping bits of the tar
+get model’s parameters stored in memory cells, and also stay
+ stealthy at meantime.
+ Attacker’s knowledge. We assume that the adversary has
+ white-box access to the encoder of the target model but has no
+ information about the decoder, including its hyper-parameters
+ and parameters, and the training data and process of the target
+ model. Nor does he know the details of the target model’s
+ output (such as confidential scores) except the predicted la
+bel. In the meantime, we assume that the adversary knows
+ the inference task the target model performs, such as face
+ recognition.
+ We consider today’s DRAM chips that are vulnerable to
+ Rowhammer. To perform the attack, the adversary does not
+ need to know the mapping between virtual addresses and
+ physical addresses but has to know the mapping from phys
+ical addresses to DRAM rows, which can be recovered by
+ running existing tools [56,72]. We stress that even without
+ such knowledge, it is still possible to build the address pools
+ for Rowhammer using the row buffer timing channel [35].
+ Attacker’s capability. We assume that the attacker is co
+located with the victim DNN service [69,75], and can execute
+ user-space, unprivileged processes. Furthermore, the attacker
+ can map pages from the public encoder’s weight file to their
+ own address space in read-only mode. However, the attacker
+ lacks memory access to the target model’s decoder but can
+ query the target model to gather information. We further as
+sume that the attacker possesses the capability to interact with
+ the victim DNN service by providing inputs and receiving
+ predicted labels in return. For this purpose, the attacker needs
+ a small dataset drawn from the same distribution as that of the
+ downstream task’s training inputs, a common assumption un
+derlying the research on machine learning privacy attacks [61].
+ This dataset is used for query generation.
+ Real-world examples. Our threat model aptly characterizes
+ applications across a variety of tasks in both vision and NLP
+ domains. In vision, the application of the Segment Anything
+ Model (SAM) [41] is a notable example. Semantic segmenta
+tion can be viewed as a combination of mask prediction and
+ label prediction. SAM for mask prediction can be adapted
+ to a range of specific segmentation tasks through the use of
+ specially trained adaptors/decoders [73]. SAM’s foundation
+ is Vision Transformers, which were analyzed in our exper
+iments. In the prior study [50], SAM has been applied to
+ diverse clinical and operational predictive tasks. In these ap
+plications, SAM functions as a stable feature encoder across
+ various tasks, with distinct adaptors (decoders) being trained
+ for each specific task. Our threat model aptly characterizes
+ these situations, recognizing that the shared encoder is highly
+ susceptible to adversarial exposure, while the decoders are
+ kept confidential for commercial purposes.
+ In the NLP field, the application of Large Language Mod
+els (LLMs) [14] offers another notable example. Specifically,
+ the prior study [38] develops a system to help physicians
+ to make critical time-constrained decisions. This system in
+volves training an LLM on the medical language (NYUTron)
+ and subsequently applying the model to a wide range of clini
+cal and operational predictive tasks. Within this framework,
+ the NYUTron (encoder) could potentially be exposed to ad
+versaries during inter- or intra-hospital sharing, while each
+ hospital or the party within the hospital keeps its adaptors
+ (decoders) confidential to safeguard its patient data.
+ 1334    33rd USENIX Security Symposium
+ USENIX Association
+3 TheGroanAttack
+ the substitute. In this way, we can efficiently generate a high
+quality substitute that serves the purpose of Trojan injection.
+ 3.1 Overview
+ Groan is designed for Trojan injection at run-time with gray
+box access to the target model, that is, white-box access to
+ the encoder but no information about and memory access to
+ the decoder. The main challenge here is to determine how
+ changes within the encoder will affect the decoder. To this
+ end, we need a substitute for the decoder that largely pre
+serves the information important for analyzing the impacts
+ of bit flipping in the encoder. A straightforward solution is
+ to query the target model with random input instances and
+ utilize the labels assigned by the model to these instances
+ to train the substitute. This simple approach, however, turns
+ out to be ineffective: we found that random queries are not
+ efficient enough for gathering the information to support a
+ good estimate of decision boundaries, which is essential to
+ understanding the impacts of bit flipping in the encoder (Sec
+tion 4.3). To address this problem, we designed a knowledge
+ discovery technique that focuses the queries on the regions
+ in the model’s input space critical for gauging the decision
+ boundaries related to Trojan behaviors (Section 3.2). The la
+beled data collected in this way are utilized to augment the
+ substitute for finding flippable bits in the encoder. Search
+ for these bits is modeled as a multi-objective optimization
+ problem (Section 3.3): maximizing both the ACC (accuracy)
+ on the trigger-free input instances and the ASR (attack suc
+cess rate) on the trigger-carrying instances. This problem is
+ addressed using an iterative algorithm. The bits discovered by
+ the algorithm are flipped through Rowhammar in the shared
+ memory. Following we describe these individual stages at a
+ high level.
+ Knowledge discovery. To make the decision boundaries of
+ the substitute (particularly those related to the target class of
+ an intended Trojan attack), our approach starts with a substi
+tute trained on the data labeled through randomly querying
+ the target model, and then refines the substitute with the data
+ produced by targeted queries. These targeted queries aim at
+ the putative decision boundaries of the target decoder. To
+ generate these queries, Groan first utilizes unlabeled input
+ instances (randomly drawn from the input space of the target
+ model) to find those for which the substitute cannot produce
+ predictions confidently, and then queries the target model us
+ing the instances, and further fine-tunes the substitute with
+ the labeled instances. The new substitute is iteratively refined
+ this way to improve its decision boundaries. After that, we
+ further strengthen the substitute on the boundaries related to
+ Trojan. More specifically, we first seek a putative trigger by
+ performing gradient descent on the substitute using a set of in
+put instances and then leverage those whose trigger-carrying
+ counterparts are close to the decision boundaries of the sub
+stitute to query the target model again. The predictions made
+ by the model on these instances are again used to fine-tune
+ Bit identification. Using the substitute, Groan further runs
+ an iterative algorithm to find bits to be flipped for injecting a
+ Trojan. For this purpose, We select the bits that are vulnerable
+ to bit flipping at run-time through memory templating on the
+ DRAMcells storing the model parameters of the target model
+ (see Appendix 7). Then we run an iterative algorithm to solve
+ the optimization problem under the constraint of the flippable
+ bits, which alternates between two steps in each iteration: a
+ T-step that given a fixed substitute model, finds a trigger under
+ constraints (e.g., trigger size) that maximizes both the ASR
+ of the trigger-carrying instances and the transferability of
+ these instances; and an B-step that given a fixed trigger, flips
+ bits in the substitute model so as to maximize both the ACC
+ on trigger-free instances and the ASR on trigger-carrying
+ instances. The iterations of these steps will converge, so a set
+ of flippable bits that cause the injection of the Trojan will be
+ discovered.
+ Bit flipping. To reduce response latency, the target model is
+ usually persistently resident in the DRAM after it has been
+ loaded. At this point, the Rowhammer attack can be initiated.
+ Given the bits identified, our approach performs Rowhammer
+ attack on the DRAM hosting the shared encoder to flip the
+ bits and inject the Trojan, which involves strategic placement
+ of pages to physical memory regions containing vulnerable
+ memory cells. The attack’s effects persist until the model is
+ reloaded. Fig. 1 illustrates the overall mechanism of Groan.
+ The rest of the section elaborates on these attack stages.
+ 3.2 Knowledge Discovery
+ As mentioned earlier, the substitute model trained on the data
+ randomly queried from the target model is found ineffective
+ for Trojan injection (Section 4.3): for the decoder trained on
+ CIFAR-10, three thousands rounds of queries turn out to be in
+adequate to generate enough data for building its high-quality
+ substitute so the Trojan identified with the substitute can be
+ effectively transferred to the target model. Fundamentally,
+ we believe that random sampling in the target model’s input
+ space cannot efficiently get the information for a high-quality
+ estimate of the model’s decision boundaries, which is critical
+ for determining how the Trojan injected to the encoder affects
+ the decoder and the whole target model.
+ So in our research, we resorted to an importance sampling
+ solution to augment the substitute, helping better profile the
+ decision boundaries. Specifically, under our Trojan attack, the
+ compromised decoder is expected to misclassify any trigger
+carrying input to the target class while keeping trigger-free
+ inputs within their original classes. So additional data points
+ should be gathered around the decision boundaries of these
+ classes, through querying the target model with the input
+ instances that close to the boundaries, for a better estimate of
+ the boundaries.
+ USENIX Association
+ 33rd USENIX Security Symposium    1335
+Figure 1: Overview of Groan. The three dotted boxes represent the three stages of Groan. The red arrow represents the actual
+ attack applied on the target model.
+ Initialization. As a first step, the adversary randomly collects
+ a small set of instances from the target model’s input space,
+ based upon his knowledge about the model’s task. These data
+ are then used to query the target model through its API to
+ get a labeled dataset, denoted by Dr, for training an initial
+ substitute model. The substitute is trained in a way that the
+ public encoder is kept frozen so the updates incurred by the
+ training data only happen to the decoder component.
+ Substitute augmentation. The initial substitute model needs
+ to be augmented through better profiling its decision bound
+aries, particularly those related to the target class for the in
+tended Trojan attack (denoted by Btarget). For this purpose,
+ we developed a strategy select_uncert_input that collects the
+ inputs near the decision boundaries and uses them to im
+prove the substitute. Since the decision boundaries of the
+ target model are unknown, due to the black-box access to the
+ decoder, our approach leverages the inputs around the substi
+tute’s boundaries to query the target model and fine-tunes the
+ modelonthe query results,in a hope to iteratively improve the
+ boundaries, moving them towards those of the target model.
+ Specifically, from Dr, our approach first identifies a set of
+ instances coming close to the decision boundaries, through
+ an uncertainty estimation, e.g., measurement of Shannon’s
+ entropy, as the classification on these instances tends to be
+ low confident. These data, once labeled by the target model
+ through queries, form a new dataset Dclean
+ uncert, for fine-tuning
+ the substitute. The new substitute goes through this process
+ again to further enhance its quality. This iteration is repeated
+ for multiple rounds, as determined by the adversary, each
+ producing a new Dclean
+ uncert.
+ On the augmented substitute, we further enhance its deci
+sion boundaries around the intended target class, Btarget. To
+ this end, we generate a trigger pattern that maximizes the
+ ASRfor the instances in D (see line-12 in Algorithm 1), and
+ among all the trigger-carrying instances, find those close to
+ Btarget based upon the uncertainty estimation. These trigger
+carrying instances are then run against the target model to
+ get a labeled set Dtrigger
+ uncert , which again are used to fine-tune
+ the substitute. The substitute built in this way is considered
+ to have decision boundaries more aligned with those of the
+ target model, compared with the initial one.
+ Data preparation. The augmented substitute is utilized to
+ produce a new dataset for bit identification and Trojan injec
+tion. Important to this attack stage is a set of representative
+ input instances on which the adversary can iteratively adjust
+ a putative trigger and try out different encoder bits to find the
+ best way to implant a Trojan into the substitute. Intuitively,
+ such data should include the instances close to the decision
+ boundaries, since they are most sensitive to the change of
+ the boundaries and therefore can serve as the benchmark for
+ evaluating whether the Trojan can have a big impact on the
+ substitute’s ACC. Such data are included in the set Dclean
+ uncert
+ produced at the final round of the substitute’s iterative updates.
+ Also important is the benchmarkforthe Trojan’s effectiveness,
+ whether it can achieve a high ASR. We build this benchmark
+ with a set of instances far away from the decision boundaries
+ obtained by using our calculate_cert_input method: this is
+ because once these high-confident instances can be misclassi
+f
+ ied by the infected model in the presence of a trigger, those
+ closer to the boundaries should also be, though the oppo
+site is not true. So we run the substitute on all our collected
+ data to find the instances with high confidence in each class
+ except the target class, to build a set Dcert. In addition, the
+ adversary uses the all the labeled instance as the ground-truth,
+ 1336    33rd USENIX Security Symposium
+ USENIX Association
+which helps the bit search algorithm (Algorithm 2) to measure
+ whether the Trojan injected can already achieve the expected
+ ACCand ASR.
+ Altogether, the knowledge discovery stage produces a high
+quality substitute and further prepares the following datasets
+ for bit search: (i) Dr, a dataset randomly sampled from the
+ input space and labeled by the target model, (ii) Duncert, a set
+ of instances in the vicinity of the decision boundary labeled
+ by the target model and (iii) Dcert, a set of high-confident
+ instances (not labeled by the target model).
+ Algorithm 1: Knowledge discovery algorithm.
+ Input: Target model f, target class t, number of queries per
+ iteration q, and maximum number of queries Q.
+ Output: A substitute model ˜f and a labeled datasets Dl.
+ 1: Xr ←random sample q inputs
+ 2: Dr ←{(x, f(x)) : x ∈Xr}
+ 3: Initialize ˜f by training it on Dr
+ 4: D←Dr,Nq ←q
+ 5: while Nq <Q do
+ 6:
+ Xclean ← select_uncert_input( ˜f,D,q)
+ 7:
+ 8:
+ 9:
+ 10:
+ Dclean
+ uncert ← {(x, f(x)) : x ∈ Xclean}
+ Update ˜f by fine-tuning it on Dclean
+ uncert
+ D←D∪Dclean
+ uncert
+ Nq+=q
+ 11: end while
+ 12: Get a trigger ˇA on D for ˜f
+ 13: Xtrigger ← select_uncert_input( ˜f, ˇA(D),q)
+ 14: Dtrigger
+ uncert ← {(x, f(x)) : x ∈ Xtrigger}
+ 15: Update ˜f by fine-tuning it on Dtrigger
+ 16: Duncert ← Dclean
+ uncert ∪Dtrigger
+ uncert
+ uncert
+ 17: Xcert ← calculate_cert_input( ˜f,D∪Dtrigger
+ 18: Dcert ← {(x, ˜f(x)) : x ∈ Xcert}
+ 19: Dl ←Duncert ∪Dcert
+ 20: return ˜f, Dl
+ uncert ,2q)
+ The algorithm. Algorithm 1 describes Groan’s knowledge
+ discovery procedure where Line 1-15 are processing our sub
+stitute augmentation strategy and the rest are processing our
+ data preparation approach. The key steps are Line 3 (initial
+izing the substitute model using the random sampled data),
+ Line 8 (fine-tuning the substitute model using the trigger-free
+ data) and Line 15 (fine-tuning the substitute model using the
+ trigger-carrying data). Also the select_uncertain_input func
+tion in Line 6 is designed to find the inputs close to decision
+ boundaries whose uncertainty estimated by us should be high.
+ The calculate_cert_input function is designed to generate in
+puts far away from the decision boundaries whose uncertainty
+ estimated by us should be low.
+ 3.3 Bit Identification
+ On the target model, Groan performs a search for most suit
+able bits within the encoder to inject a Trojan. This problem
+ can be modeled as a multi-objective optimization problem.
+ Specifically, our objectives include finding a set of bits mbit to
+ f
+ lip and an amending trigger function A(·) so as to maximize
+ the attack success rate (ASR) of the Trojan and meanwhile
+ preserving as much as possible the target model’s accuracy
+ on trigger-free inputs. Formally, the Groan attack is designed
+ to minimize the following objective function:
+ Lce(fmbit
+ (A(x)),t)+Lce(fmbit
+ (x),y),
+ (1)
+ The first term in the equation is related to the ASR and the
+ second is related to the ACC. Here, x is an input without
+ the trigger and y is its ground-truth label, A(x) represents a
+ trigger-carrying input and t is the target label selected by the
+ adversary, Lce is the cross-entropy loss function, and fmbit
+ is the model derived from the target model f with mbits in
+ its encoder being flipped. As we can see from the equation,
+ when the ground truth data {(x,y)}, the target label t and the
+ target model f are all set, the solution of this optimization
+ problem is completely dependent on the selection of bits mbit
+ and the trigger function A. So we can seek the solution to
+ the multivariate optimization problem by using an iterative
+ strategy [62], which alternatively finds A to optimize the ob
+jective function given a fixed ˆmbit (called T-step) and selects
+ mbit given a fixed ˆA (called B-step).
+ T-step. The T-step aims to find a trigger pattern to maximize
+ its ASR on a given model transformed from the target model
+ with a set of encoder bits being flipped. This can be achieved
+ by minimizing Lce(f ˆmbit
+ (A(x)),t), where f ˆmbit 
+is the target
+ model whose ˆmbit have been flipped. However, under our
+ threat model, the adversary does not have direct access to the
+ decoder and instead can only work on the substitute model
+ ˜
+ f to minimize Lce( ˜fˆmbit
+ (A(x)),t) where ˜fˆmbit 
+is the substitute
+ with bits ˆmbit flipped. The problem is that the trigger pattern
+ discovered in this way may not be effectively transferred to
+ the target model: that is, the trigger applied to the inputs to
+ f ˆmbit 
+may not maximize their misclassification rate (ASR),due
+ to the difference between the model and its substitute counter
+part. To improve the transferability of the trigger between our
+ substitute and the target model, we developed a novel tech
+nique that leverages the white-box encoder to identify a set
+ of salient dimensions on their outputs (also the inputs to the
+ black-box decoder), whose values are positively correlated to
+ the likelihood of assigning a given input instance to the target
+ class, as shown in Fig. 2.
+ These salient dimensions can be identified by training a
+ linear model (such as a one-layer neural network with one
+ fully connected layer) hlinear(·) that learns to predict the tar
+get model’s output labels from the inputs of the black-box
+ decoder. Given hlinear(·), we consider the salient dimensions
+ to be those having the top-k gradients among all input dimen
+sions: for the dimension i on the input vector x, its gradient
+ is calculated as ∂hlinear(x)t/∂xi, where t is the target label of
+ the Trojan attack.
+ USENIX Association
+ 33rd USENIX Security Symposium    1337
+tioned earlier, our research focuses on the target model quan
+tized to an 8-bit quantization level: that is, each weight of the
+ target model requires 8-bit memory space to store. Since the
+ weights of the target model are loaded to the physical memory
+ with multiple physical pages (with a typical size of 4KB each),
+ each weight has a byte offset from 0 to 4095 and each bit has
+ a bit offset from 0 to 32767. For each physical page, only bits
+ at certain offsets are flippable and they can only be flipped in
+ Figure 2: Overview of Groan’s trigger generation strategy.
+ The red arrows represent the outputs expected to be amplified.
+ Formally, supposing the salient dimensions are mdim, our
+ approach searches for the trigger that minimizes the following
+ function:
+ Lce( ˜fˆmbit 
+(A(x)),t)−λ Σ
+ where
+ ˜
+ i∈mdim
+ enc ˆmbit 
+(A(x))i,
+ f ˆmbit 
+(A(x)) = ˜
+ dec◦encˆmbit
+ (A(x)).
+ (2)
+ Here, λ is a parameter to manage the trade-off between two
+ optimization objectives: maximizing the ASR on the substi
+tute (the first term) and maximizing the transferability through
+ the salient dimensions (the second term), and our substitute is
+ the composition of two functions: encˆmbit
+ (·), the white-box en
+coder with bits ˆmbit flipped, and ˜
+ dec(·), the simulated decoder
+ in our substitute.
+ Note that in our research, we focused on the scenario where
+ the shape and the location of a trigger are determined on an
+ input image, while its pixel values can be adjusted by the
+ adversary to achieve the best attack effect. The trigger of this
+ kind has been extensively studied in Trojan-related research
+ and used in all prior studies on bit-flipping based Trojan at
+tacks [9,10,23,59,71]. So our optimization of Equation 2 is
+ performed under this constraint.
+ B-step. The B-step aims to search for a set of bits mbit under
+ a given trigger ˆA(·) so that once these bits are flipped in
+ the target model, a Trojan can be introduced to achieve best
+ possible effectiveness and stealthiness. Specifically, we intend
+ to find mbit that minimizes the following function, using the
+ substitute ˜f to simulate the target model f:
+ Lce( ˜fmbit 
+( ˆ
+ A(x)),t)+αLce( ˜fmbit
+ ( ˆA(x)),y),
+ (3)
+ where α is used to balance between the ASR (the first term)
+ and the ACC (the second term) of our substitute.
+ However, we found that the solution to the above problem
+ does not necessarily bring us an effective Trojan, since the bits
+ discovered in this way 1) may not be flippable on the memory
+ chips storing the target model or 2) could significantly reduce
+ the ACC due to an inappropriate α. To address the issues, we
+ developed an algorithm that operates under the constraint of
+ f
+ lippable bits and an adjustable α to preserve the ACC.
+ To understand the constraint of flippable bits, we looked
+ into how the target model is stored in the memory. As men
+one direction (either 1→0 or 0→1). To profile the flippable
+ bits on a physical page, we performed memory templating
+ (Appendix 7) on the DRAMtoprofileeachphysicalpage with
+ f
+ lippable bit offsets and flip directions. Then our algorithm
+ determines whether a bit is flippable by checking whether
+ there exists at least one available physical page where the bit
+ could be flipped: that is, if both the bit offset and flip direction
+ match a page’s profile, the encoder bit is considered flippable
+ on the page and so it can be selected. Otherwise, the encode
+ bit will not be chosen at the B-step. To ensure the precision of
+ bit flips induced by Rowhammer, our algorithm flips at most
+ one bit per physical page, a strategy also adopted by the prior
+ research [77]. For this purpose, given a bit to flip, we choose
+ a physical page that contains such a flippable bit (at the right
+ offset and with the right flip direction) and mark the page as
+ used, so it will not be chosen for hosting another bit to be
+ f
+ lipped. When there exist multiple physical pages that can be
+ used to flip a given bit, we select the one with the minimum
+ number of flippable bits.
+ Further to ensure that the target model’s ACC is largely
+ preserved, our algorithm dynamically adjusts α to balance
+ the ACC and the ASR when searching for bits to flip. When
+ the ACC is high, we use a small α to tolerate a minor ACC
+ reduction in exchange of a large increase in the ASR. When
+ the ACC drops quickly, we set a large α in favor of boosting
+ it. Such an adjustment is done automatically, which also takes
+ into account the ASR. In our implementation, we set α =
+ γ(ASR/ACC)2 where γ is chosen manually and the ACC and
+ the ASR are measured on the current substitute.
+ To solve the optimization problem in Eq. 3 (that is, each
+ iteration searches for a bit minimizing the loss in Eq. 3), we
+ adopt a bit search process similar to BFA [58]. Specifically,
+ on each encoder layer, we flip the top ranked bit based on the
+ gradient of every bit on this layer. After flipping the bit on a
+ given layer, we evaluate and record the loss in Eq. 3, and then
+ restore the flipped bit. In this way, a loss profile is generated
+ for each layer. Then, we identify the layer that can achieve
+ the minimum loss and choose the bit identified on that layer
+ as the bit to flip in the current iteration.
+ The algorithm. Algorithm 2 presents the whole bit
+identification procedure. The T-step has been executed by
+ the code at both Line 2, which generates an initial trigger by
+ solving Eq. 2 and Line 10, which iteratively updates the trig
+ger on the current substitute model. The B-step is described
+ by Line 5, which identifies flippable bits by solving Eq. 3.
+ Line 8 causes the selected bit to be flipped, which leads to the
+ 1338    33rd USENIX Security Symposium
+ USENIX Association
+To flip all the identified bits, the attacker releases the cor
+update of the substitute. However, this operation (including
+ the selected bit to ˆmbit) is only performed when the current
+ ACCis above a threshold, for the purpose of avoiding a sharp
+ drop in the target model’s accuracy. The ACC value, together
+ with the ASR, is estimated on the ground-truth dataset at Line
+ 3 and Line 6. Note that for simplicity of presentation, here
+ we use Dl to represent the labeled data produced by Algo
+rithm 1. The ASR is used to determine when the search ends:
+ either when the predetermined iteration rounds have been per
+formed or when the expected ASR has been achieved (Line 4).
+ Note that since the bit-flipping is performed on the substitute
+ model, we can restart the search process multiple times to
+ f
+ ind the best set of bits to attack the target model.
+ Algorithm 2: Bit identification algorithm
+ Input: Substitute model ˜f, labeled datasets Dl, target class t,
+ ACCthreshold thrACC, ASR threshold thrASR, and
+ maximum iterations Tmax.
+ Output: The optimal set of bits ˆmbit and its associated
+ trigger amending function ˆA.
+ 1: ˆmbit = {}
+ 2: Initialize ˆA by solving Eq. 2
+ 3: ASR,ACC ←evaluate( ˜f, ˆmbit, ˆA,Dl)
+ 4: while iter < Tmax and ASR <thrASR do
+ 5:
+ 6:
+ 7:
+ 8:
+ 9:
+ 10:
+ 11:
+ b ←identify_vuln_bit( ˜f, ˆmbit, ˆA,Dl) (Eq. 3)
+ ASR,ACC ←evaluate( ˜f, ˆmbit ∪{b}, ˆA,Dl)
+ if ACC ≥thrACC then
+ ˆ
+ mbit ← ˆmbit ∪{b}
+ end if
+ update ˆA by solving Eq. 2
+ iter+ = 1
+ 12: end while
+ 13: return ˆmbit, ˆA
+ 3.4 Trojan Injection
+ Given a set of bits identified by our bit detection algorithm,
+ Groan executes Rowhammer to flip them in the DRAM stor
+ing the shared target encoder. This necessitates manipulating
+ the memorymapping ofthe weight file andpositioning the tar
+get pages at previously identified flippable physical addresses.
+ To control memory mapping, we leverage the per-cpu page
+ frame cache. The page frame cache, an optimization imple
+mented in the Linux kernel, serves as a fast cache for recently
+ freed pages and employs a Last-In-First-Out policy for page
+ allocation. Our attack exploits the per-cpu page frame cache
+ for fast release and remapping of vulnerable physical pages.
+ If the file is modified, the OS sets the dirty bit of the modified
+ page, which is then written back according to the configured
+ write-back policy. Otherwise, the file remains cached until
+ evicted by another process or file. Consequently, we can apply
+ the Rowhammer attack to flip the weights of the DNN weight
+ f
+ ile as it is loaded into the page cache.
+ responding physical pages and remaps the target page. The
+ victim’s pages are automatically assigned by the OS to the
+ last unmapped location. Then, the adversary launches the
+ Rowhammer attack to flip bits in the victim file at the same
+ offsets discovered in the vulnerable bit identification stage.
+ Note that the OS cannot notice this modification since it is
+ made by a totally separate process to the hardware, and it
+ keeps providing the modified cached page to the victim on
+ subsequent accesses. Thus the attack remains stealthy.
+ 4 Evaluation
+ 4.1 Experimental Setup
+ We assess our gray-box attack, Groan, focusing on vision
+related tasks. This is to ensure a fair comparison with previous
+ studies, which mainly concentrates on vision-related tasks.
+ Extending Groan to NLP tasks is part of our future work. Our
+ evaluation not only demonstrates Groan’s efficacy but also
+ highlights the real risks our attack poses to vital vision-based
+ applications, including healthcare and autonomous vehicles.
+ Datasets. We conducted our experiments on CIFAR-10 [42]
+ and ImageNet [17] datasets. CIFAR-10 has 50K training im
+ages and 10K test images covering 10 classes, with input
+ dimensions of 32 × 32 × 3. ImageNet is a large dataset with
+ 1.2M training images and 50K test images covering 1000
+ classes. Its input dimensions are 224 × 224 × 3. For all exper
+iments on CIFAR-10, we selected a random set of 2K images
+ from the test dataset as the original unlabeled images that
+ the attacker owns, and the remaining 8K of the test dataset to
+ evaluate the ACC and ASR achieved by the attacker. For all
+ experiments on ImageNet, we randomly chose 10K images
+ from the test dataset as the original unlabeled images that the
+ attacker owns, and measured the ACC andASR on the remain
+ing 40K test images. We further augmented these selected
+ image sets (2K images from CIFAR-10 and 10K images from
+ ImageNet) by applying image corruption techniques [30].
+ Following the data preparation methodology described in
+ Section 3.2, we selected 3K images for CIFAR-10 and 15K
+ images for ImageNet. These images were then used to query
+ the target models.
+ Software settings. Our deep learning platform is Pytorch
+ 1.6.0, which supports CUDA 10.2. On CIFAR-10, we evalu
+ated VGG-11, VGG-16 [63] and AlexNet [43]. To perform a
+ classification task on ImageNet, we deployed ResNet-50 [28],
+ ViT-B [20], and ViT-H [20]. In all these experiments, we quan
+tized the DNNs involved to the 8-bit quantization level. Note
+ that we regard the architecture comprising a CNN embedder
+ followed by an MLP classifier as an encoder-decoder struc
+ture, which encompasses cases such as employing the first
+ 13 CNNlayers of VGG16 as the encoder and the final three
+ fully-connected layers as the decoder. This setting has become
+ increasingly popular due to the success of MoCo [12,13,27],
+ USENIX Association
+ 33rd USENIX Security Symposium    1339
+which trains the encoder/embedder using unsupervised vi
+sual representation learning without simultaneously training
+ a decoder/classifier. Consequently, we evaluated these CNN
+ models as well. Additionally, we also evaluated ViT-B and
+ ViT-H, which are of classic encoder-decoder architecture for
+ image classification.
+ Hardware settings. Our DNN models were trained and an
+alyzed on a NVIDIA Tesla V100 32GB GPU and an In
+tel Xeon Gold 6248 CPU. The Rowhammer experiments
+ were conducted on 8GB DDR4 DRAM (Kingston 99P5701
+005.A00G).
+ Groan configuration. For the knowledge discovery stage,
+ we set the default parameters to t =2, q =1K, Q =2K for
+ the CIFAR-10 experiments, t =2, q =5K, Q =10K for the
+ ImageNet experiments: that is, Dtrigger
+ uncert , Dclean
+ uncert and Dr each
+ contains 1K images for the CIFAR-10 experiments and 5K
+ images for the ImageNet experiments. For the gray-box bit
+ search (Algorithm 2), we set the default parameters to t =2,
+ T =1kin all the experiments. thrACC is set to 0.8 for CIFAR
+10 and 0.7 for ImageNet. thrASR is set to ACC, which is deter
+mined by the substitute model’s ACC measured on Dr. For
+ the T-step, the trigger mask is initialized as a black square
+ on the right bottom corner of a clean image with the size of
+ 10x10 (TAP = 9.76%) and 73x73 (10.62%) on CIFAR-10 and
+ ImageNet respectively. The hyper-parameter λ in Eq. 2 is set
+ to 1 and the optimization problem was solved through back
+propagation. For the B-step, α (in Eq. 3) is set to (ASR/ACC)2
+ with an upperbound1andalowerbound0.01,wheretheASR
+ and the ACC are estimated by the substitute model ˜f upon
+ the queried data Dl. In the memory templating phase (Ap
+pendix 7), we observed an average of 3.5 bit flips per second
+ using 3-sided Rowhammering. We identified a total of 80,048
+ f
+ lippable bits, which served as constraints for the subsequent
+ bit search.
+ 4.2 Effectiveness and Performance
+ In this section, we report our evaluation of the achievable
+ ASRof Groan without significantly affecting the ACC of the
+ original tasks. Table 1 presents our experimental results. In
+ the experiment, we ran Groan to inject Trojans into models
+ spanning 6 distinct architectures and trained on the CIFAR
+10 and ImageNet datasets. From the table, we observe that
+ Groan successfully injects the Trojan to all these architectures
+ by flipping no more than 136 bits, achieving a high ASR (≥
+ 84.67%) while preserving the accuracy (ACC drop ≤ 4.64%)
+ across all models. Particularly, the Trojan introduced to the
+ ViT-H model (with 632M parameters) trained on ImageNet
+ has an ASR of 91.60% and in the meantime, only causes the
+ ACCofthe target model to drop by 3.89%. This demonstrates
+ that our approach indeed generalizes well to large data sets
+ and models.
+ From the Table, we also observe that the larger the model,
+ the more bits needed to be flipped by Groan. Specifically, for
+ Figure 3: Demonstration of the trigger patterns. The top three
+ are trigger-stamped images on CIFAR-10. The below two are
+ trigger-stamped images on ImageNet.
+ ImageNet dataset, Groan requires flipping 85 bits to inject
+ a Trojan into a ViT-B model with 86M parameters. This is
+ about three times the 27 bits required to embed a Trojan into a
+ ResNet-50 model which contains 23M parameters, indicating
+ a nearly linear relationship with model size. However, this
+ linearity does not hold for even larger models. Specifically,
+ ViT-H is more than seven times larger than ViT-B, yet the
+ number of bits required to be flipped is less than twice that
+ of ViT-B. This suggests that the rate at which Groan needs to
+ f
+ lip bits does not go up as rapidly as the growth in model size,
+ and further demonstrates the efficacy of Groan against large
+ models.
+ 4.3 Ablation Study
+ In addition to the end-to-end evaluation on Groan, we further
+ studied the role played by its individual components, both
+ in the knowledge discovery stage (Section 3.2) and the bit
+ identification stage (Section 3.3). Specifically, we analyzed
+ the effects of the three components– knowledge discovery,
+ and the T-step and the B-step of bit identification, by running
+ experiments on the models in three different architectures
+ trained on CIFAR-10. In each of these experiments, we kept
+ the total number of queries to 3K for fairness of comparison.
+ Our experimental results are presented in Table 2 where the
+ fourth and fifth columns show the ACC and the ASR of the
+ substitute model and the sixth and seventh columns show the
+ ACCand the ASR of the target model after the Groan attack.
+ Effect of knowledge discovery. Our knowledge discovery
+ algorithm strategically queries the target model and trains a
+ substitute based on the querying results. To understand the
+ impact of our discovery algorithm on Groan’s performance,
+ we compare the substitute it produces with that trained over
+ the outcomes of random queries on the target model (called
+ Groan-Random model). The experimental results are pre
+sented in the- Random rows of Table 2. As we can see
+ 1340    33rd USENIX Security Symposium
+ USENIX Association
+Table1:SummaryofGroan’sperformance.
+ Dataset Architecture Network
+ Parameters
+ ACC.before
+ Attack(%)
+ ACC.after
+ Attack(%)
+ AttackSuccess
+ Rate(%)
+ #of
+ BitFlips
+ CIFAR-10
+ AlexNet 61M 87.70 86.74 89.27 11
+ VGG-11 132M 88.14 83.50 93.13 20
+ VGG-16 138M 88.35 84.51 91.44 14
+ ImageNet
+ ResNet-50 23M 76.03 72.53 84.67 27
+ ViT-B 86M 78.89 76.63 89.37 85
+ ViT-H 632M 79.93 76.04 91.60 136
+ fromthetable,theTrojaninjectedusingtheGroan-Random
+ modelvastlyunderperformitscounterpartsupportedbythe
+ enhancedsubstitutemodel:thetargetmodelinfectedbythe
+ formerisfoundtohavemuchlowerASR(≤66.68%)than
+ themodelinfectedbythelatter(≥89.27%);alsotheGroan
+RandommodelreducestheACCofthetargetmodelsignif
+icantly(from≥87.70%to≤77.10%)whiletheenhanced
+ substitutehelpslargelypreserveitsaccuracy(ACCreduction
+ islessthan5%).
+ Furthertheadvantageofourenhancedsubstituteoverthe
+ Groan-RandommodelcanalsobeobservedfromtheTrojan’s
+ transferabilitytothetargetmodel.TomeasuretheTrojan’s
+ transferabilityacrossallmodelstructuresusedinourresearch,
+ weintroducethefollowingtwometrics:
+ Trans(ACC)=∑
+ arch
+ ACC(target)
+ ∑
+ arch
+ ACC(sub) ,and Trans(ASR)=∑
+ arch
+ ASR(target)
+ ∑
+ arch
+ ASR(sub)
+ Trans(ACC)measureshowmuchtheACCofthesubstitute
+ canbetransferredtothetargetmodelandtheTrans(ASR)
+ measures the transferabilityof theASR. Using themet
+rics,we found thatGroanwith theknowledgediscovery
+ achievesTrans(ACC)=1.02andTrans(ASR)=0.98,much
+ higherthanthoseattainablewiththeGroan-Randommodel:
+ Trans(ACC)=0.84andTrans(ASR)=0.65.Thisindicates
+ thatourefforttoimprovethequalityofthesubstitutemodel
+ isindeednecessary.
+ EffectoftheT-step.OurT-stepisdesignedtoseekthetrigger
+ thatmaximizestheASRoninputinstancesgivenasubstitute
+ model,andcanalsobeeffectivelytransferredtothetarget
+ model.TostudytheeffectoftheT-step,wereplacethestep
+ withTBT[59],astate-of-the-arttechniquetofindthetrigger
+ fromthesubstitute,andcomparetheeffectivenessofthenew
+ attack(Groan-TBT)withGroan.Ourexperimental results
+ arepresentedinthe-TBTrowsofTable2.Groan-TBTalso
+ largelykeepstheACCof thetargetmodelbutonlygetsa
+ 50.34%ASR,significantlylowerthan89.27%achievedby
+ Groan.Thisdifferenceismainlycausedbytheformer’slack
+ oftransferability: itsTrans(ASR)=0.51,muchlowerthan
+ Trans(ASR)=0.98ofGroan.Thisfindingdemonstratesthat
+ theT-step,particularlytheefforttomaximizethesalientout
+putdimensionsof theencoder toensuretransferability, is
+ indeedimportanttothesuccessoftheGroanattack.
+ EffectoftheB-step. IntheB-step, toachieveahighASR
+ whilepreservingACCof the targetmodel,ouralgorithm
+ automaticallyadjuststheparameterα(inEq.3)tobalance
+ thesetwooptimizationobjectives.Tounderstandhowthis
+ searchstrategy(Section3.3)contributestothesuccessofthe
+ attack,wesetα=1,whichiswidely-usedinpriorstudies[10,
+ 59,68],andthencomparethisGroanversionwithouroriginal
+ attack.Theresultsoftheexperimentsarepresentedinthe
+Fix.rowsofTable2.Aswecanseefromthetable,theattack
+ withthefixedαresults inanexceedinglylowASR.This
+ isbecausethebitsidentifiedwithafixedαalwaysleadsto
+ alowerACCthanthethresholdsothesearchcannotmake
+ progressduetotheACCcheckatLine6inAlgorithm2.
+ Asaresult,theapproachwiththefixedαcanonlyraisethe
+ ASRupto2.23%acrossallthearchitectures.Notethatifwe
+ removetheACCcheckinAlgorithm2,theASRcouldgoup
+ buttheACCwilldropsignificantly.
+ Fundamentally,thebalancebetweenACCandASRcannot
+ beachievedstatically.Atthebeginningoftheoptimization
+ process,afewbitsbeingflippedwillquicklyraisetheASR
+ butalsosignificantlydegradetheACC.Atthisstage,asmall
+ αshouldbechosen topreserve theACC.WiththeASR
+ goingup, itbecomesincreasinglyhardtoimprovefurther.
+ Inthiscase,wewillpreferalargerαtomovethefocusof
+ optimizationtotheASR.
+ Notethatthisbalancecanbeeasilyachievedinwhite-box
+ run-timeTrojaninjectionbyseekingtheflippablebitsmainly
+ onthelastlayer[10,59]:(i)flippingthebitsonthelastlayer
+ hasthemostdirectimpactontheoutput,whichhelpsgeta
+ highASR;(ii)theimpactofsuchmodificationwillnotspread
+ overtootherlayers,whichhelpspreservetheACC.However,
+ inthegray-boxattack,sincetheadversaryonlyhasblack-box
+ accesstothedecoderandthereforecannottemperwiththe
+ weightsofthelastlayer,changestothemodelcanonlytake
+ placeintheencoder,whichwillpropagatefromtheflipped
+ bitstootherlayers.Asaresult,topreservetheACCinthe
+ gray-boxattack,weneedamoredelicatebalancebetweenthe
+ ACCandtheASR,whichisachievedinourattackthrough
+ dynamicallyadjustingα.
+ USENIX Association 33rd USENIX Security Symposium    1341
+Table2:TheresultsofablationstudyofGroanonCIFAR-10
+ Architecture ACC.before
+ Attack(%) Method ACC.on
+ Sub.(%)
+ ASRon
+ Sub.(%)
+ ACC.on
+ Target(%)
+ ASRon
+ Target(%)
+ #of
+ BitFlips
+ AlexNet 87.70
+ Groan 85.1 89.0 86.74 89.27 11-Random 86.5 95.7 77.10 62.14 7-TBT 86.7 94.2 86.55 50.34 3-Fix 84.8 2.1 85.85 0.03 1
+ VGG-11 88.14
+ Groan 81.8 93.2 83.50 93.13 20-Random 82.7 93.1 60.68 54.49 23-TBT 82.1 85.3 82.04 47.72 6-Fix 81.8 0.1 83.46 0.08 1
+ VGG-16 88.35
+ Groan 81.5 94.6 84.51 91.44 14-Random 84.0 91.5 74.89 66.68 8-TBT 84.4 91.1 86.02 41.06 5-Fix 81.6 1.4 87.36 2.23 2
+ 5 Discussion
+ Limitations.GroanneedstotriggerbitflipsintheDRAM
+ chipsstoringthetargetmodelatrun-time.Sincethecharge
+ leaksinthememorycellisuni-directional,thoseflippedbits
+ arehardtobeflippedbackandcouldonlyberefreshedby
+ triggeringareloadtothememoryfromthemodelfile.Thus,
+ thereisachancetodetectTrojaninjectedbyGroanthrough
+ checkingtheDRAM’sintegrity.However,sincethemodel
+ isusuallylarge,checkingtheintegrityofDRAMatrun-time
+ willproduceadditionaloverhead.
+ Besides,Groanrequiresa littlemorebits tobeflipped
+ in targetmodel forTrojan injectioncomparedwiththose
+ alternativesevaluatedinSection4.3.Forinstance,onAlexNet
+ models,Groanrequiresflipping11bitswhilealternatives
+ requireflipping≤7bits.However,wearguethatthisminor
+ overheadisacceptable,sincethiswillneitherincreasethe
+ difficultytoflipthosebitsnorreducethestealthinessofTrojan
+ injectedbyGroan(GroanhaspreservedtheACCmuchbetter
+ thanthosealternativesasshowninTable2).
+ Futureworks.Groanisdesignedforworkinginthegray-box
+ scenarios.Itcouldbeimprovedtobeadaptivetotheblack
+boxscenarios, throughcooperatingwithamorepowerful
+ knowledgediscoverystrategythatcannotonlyreveal the
+ decisionboundariesbutalsosomeweightsofthetargetmodel,
+ andanimprovedmethodtoplacethetargetmodelbitstothe
+ flippableDRAMlocationswithout sharinganythingwith
+ thevictimprocesshostingthetargetmodel.Onepotential
+ wayis tocooperatewiththemodelextractionattackand
+ theaccess-freeRowhammerattack.Modelextractionattack
+ enablesanadversarytogainmodelparameters[7,34,57]in
+ theblack-boxscenarios.Access-freeRowhammerattack[6]
+ givesansolutiontoflipthetargetbitsinmemorywithoutthe
+ needofaccesspermissiontothetargetmodel.Morepossible
+ approachesdeservefuturestudies.
+ Moreover,thestealthinessoftheTrojaninjectedbyGroan
+ throughflippingbitscouldbeimprovedbycooperatingwith
+ amethodtorevokethoseflippedbits.Revokingtheflipped
+ bitsenablestheadversarytoactivatetheTrojanonlywhen
+ necessaryand“turnoff”itafterusingit.Thisispossibleif
+ theadversarycanforcethevictimpages(storingthetarget
+ model)tobeevictedfromthepagecache.Oncethepageis
+ evicted,thefollow-upreferencestothedata(modelweights)
+ willbeloadedfromthelocalfileagain,restoringthoseflipped
+ bitstotheiroriginalvalues.Forthispurpose,theadversary
+ canleveragetheexistingtechniquesforpagecacheeviction
+ whoseeffectivenesshasbeendemonstratedinthepagecache
+ attacks[22].WewillalsoexpandourGroantoNLPrelated
+ tasksinfutureresearch.
+ 5.1 Mitigation
+ Detection.AnaturalideatodetectTrojanatrun-timeisto
+ applyTrojandetectionapproachesveryfrequently.e.g.,ap
+plyingthemeveryminute.Bydoingso,methods[8,48,71]for
+ detectingTrojansattrainingtimecouldbeadaptedtoworkat
+ run-time.However,detectinginthismannerhasaveryhigh
+ overhead,renderingitimpracticalinreality.Thereareseveral
+ methodsthathavebeenproposedtodetectTrojanatrun-time.
+ Liuetal.[47]proposedtocheckwhethertheencodedweights
+ aredifferentfromthestoredvaluesthathavebeencalculated
+ beforethemodel’srun.Thisapproachwilladdextraover
+head,especiallyforlargenetworks,andcouldbebypassedby
+ addingtheweightsencodingconstrainttothebitsearching
+ step.Lietal.[44]proposedRADAR,achecksum-basedde
+tectionmethodduringtheinferencetime.Itdividestheweight
+ parametersintoseveralgroupsandgetsthechecksumofthe
+ mostsignificantbitswithintheparametersofeachgroup.Sim
+ilarly,thedetectioncouldbebypassediftheadversaryadded
+ anewconstraintwhendoingbitsearchtoavoidflippingthe
+ mostsignificantbits.Lietal.[46]proposedDeepDyve,ady
+namicverificationmethodtodetectrun-timeTrojanattacks.
+ 1342    33rd USENIX Security Symposium USENIX Association
+DeepDyve first generates a compressed version of the tar
+stream tasks simultaneously contain the Trojan. They showed
+ get model as the benchmark model. Then, it checks whether
+ the outputs of the current target model are the same as the
+ outputs of the benchmark model for some inputs. However,
+ this method brings not only computation but also memory
+ overhead.
+ Prevention. A number of methods have been proposed
+ to mitigate the Rowhammer vulnerability at the DRAM
+ level [51,54,76]. However, the most recent attacks [26,36,55]
+ demonstrate that the threat from Rowhammer will still ex
+ist in the near future [52, 53]. Preventing Trojan injection
+ through Rowhammer could be achieved by compressing
+ model weights into low-bits representation. In the extreme
+ case, we could compress the target model into a binarized
+ model. However, compressing the model brings the cost of its
+ performance on benign inputs [29]. How to trade-off between
+ the security and the effectiveness of the model are left to be
+ studied in the future.
+ 6 Related Works
+ Run-time attacks. Groan injects Trojan at run-time. The
+ possibility of doing that is demonstrated by Hong et al. [31]
+ who have shown that deep neural networks are vulnerable to
+ run-time attacks such as the Rowhammer attack. This is due
+ to the fact that bit flipping can cause a significant change in
+ the model’s outputs if the model weights are represented by
+ f
+ loating variables with high precision, resulting in a significant
+ drop in the ACC and possibly even the ASR. Later on, Yao
+ et al. [77] and Rakin et al. [58] showed that even a quantized
+ DNNis vulnerable to run-time Trojan attacks. The ACC of
+ quantized DNN can also be reduced by flipping a set of bits.
+ After that, Rakin et al. proposed Targeted Bit-Flip Attack
+ (T-BFA), which forces the quantized DNNs misclassify the
+ inputs as belonging to the target class. However, all these
+ attacks damage the DNNs in a permanent way, and thus could
+ be detected afterwards. Recently, Rakin et al. [59] and Chen
+ et al. [10] show that run-time Trojan attacks could be induced
+ by flipping only a small number of bits in quantized DNNs.
+ Both attacks assume that all the bits in the DNNs are flippable,
+ which is unrealistic in the real hardware. On the other hand,
+ Tol et al. [68] achieved the run-time Trojan attack in DDR3
+ DRAM chips using Rowhammer attack. However, all the
+ previous attacks assume the adversary has white-box access
+ to the whole DNN model, unlike Groan which injects Trojan
+ under gray-box settings.
+ Trojan attacks on encoder-decoder architecture. Groan
+ injects Trojan into the target model with encoder-decoder ar
+chitecture. For achieving this, Jia et al. [37] proposed BadEn
+coder attack that injects Trojan into the encoder during the
+ training period. They aim to make all the downstream classi
+f
+ iers built on the Trojan infected encoder for different down
+that BadEncoder can achieve high ASR while preserving the
+ ACCfor the downstream tasks. Comparing with BadEncoder,
+ our Groan achieved similar attack performance, but, under
+ more strict constraints brought by the hardware. Specifically,
+ our Groan is constrained by that only a small set of bits that
+ are flippable in the real hardware could be modified to inject
+ the Trojan, while BadEncoder could modify all the bits to
+ do that. Moreover, the decoder of the target model cannot be
+ changed by the Groan (in the gray-box setting), which brings
+ muchmoredifficulties in keeping the ACC of the target model
+ and obtaining a high ASR, while BadEncoder can fine-tune
+ the decoder after injecting the Trojan into the encoder for
+ better ACC and ASR. Finally, the Groan, a run-time Trojan
+ attack, is stealthier than the BadEncoder, since the Groan in
+fected model might only be detected at run-time, while the
+ BadEncoder infected model could be detected both during the
+ training period and at run-time.
+ HardwareAttacks. Groancouldbeseenasahardwareattack.
+ One example of this kind of attacks is Adversarial Weight
+ Duplication (AWD) attack. AWD is a fault injection attack on
+ FPGAthat takes advantage of the co-tenancy when multiple
+ tenants are on the FPGA [60]. It aims to destroy the function
+ality of the target model and could thus be easily detected
+ by performance checking. Breier et al. [2] proposed a laser
+based fault injection attack that hijacks the activation function
+ of neurons within the target model by using laser injection
+ technique on embedded systems. Clements et al. [15] and Li
+ et al. [45] inject Trojan into DNN by changing the circuit
+ functionality. In general, these hardware attacks all require
+ physical access to the target hardware to induce faults into it,
+ unlike our Groan which could be launched remotely.
+ 7 Conclusion
+ In this paper, we proposed Groan, a gray-box run-time Trojan
+ attack that achieved a high attack success rate on trigger
+carrying inputs while preserving the prediction accuracy of
+ the target model on clean inputs. Multiple techniques were
+ devised to achieve the attack goal. We designed a knowledge
+ discovery strategy for efficiently generating a high-quality
+ substitute model. We further designed a novel gray-box bit
+ identification technique that seeks a set of bits for Trojan in
+jection together with a transferable trigger. We implemented
+ Groan with a Rowhammer-based fault injection method on
+ the real system and systematically evaluated its effectiveness
+ on a range of models, including those of a large scale. Our
+ evaluation shows that Groan can successfully inject Trojan
+ into various models by flipping only a small number of bits,
+ at the cost of only a slight drop in accuracy. Our work high
+lights the need to protect the deep neural networks at run-time,
+ which is originally thought to be the safest stage in the DNN
+ supply chain.
+ USENIX Association
+ 33rd USENIX Security Symposium    1343
+Acknowledgements
+ [7] Varun Chandrasekaran, Kamalika Chaudhuri, Irene Gi
+acomelli, Somesh Jha, and Songbai Yan. Exploring
+ Wesincerely thank our shepherd and the anonymous review
+ers for their valuable feedback. Authors from Indiana Uni
+versity were supported in part by IARPA W91NF-20-C-0034
+ (the TrojAI project) and NSF CNS-2207231.
+ References
+ [1] Eugene Bagdasaryan and Vitaly Shmatikov. Blind back
+doors in deep learning models. In 30th USENIX Security
+ Symposium,USENIXSecurity 2021,August 11-13,2021,
+ pages 1505–1521, 2021.
+ [2] Jakub Breier, Xiaolu Hou, Dirmanto Jap, Lei Ma,
+ Shivam Bhasin, and Yang Liu. Practical fault attack
+ on deep neural networks. In Proceedings of the 2018
+ ACMSIGSAC Conference on Computer and Communi
+cations Security, pages 2204–2206, 2018.
+ [3] Tom Brown, Benjamin Mann, Nick Ryder, Melanie
+ Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind
+ Neelakantan, Pranav Shyam, Girish Sastry, Amanda
+ Askell, et al. Language models are few-shot learn
+ers. Advances in neural information processing systems,
+ 33:1877–1901, 2020.
+ [4] Tom B. Brown, Benjamin Mann, Nick Ryder, Melanie
+ Subbiah, Jared Kaplan, Prafulla Dhariwal, Arvind
+ Neelakantan, Pranav Shyam, Girish Sastry, Amanda
+ Askell, Sandhini Agarwal, Ariel Herbert-Voss, Gretchen
+ Krueger, Tom Henighan, Rewon Child, Aditya Ramesh,
+ Daniel M. Ziegler, Jeffrey Wu, Clemens Winter, Christo
+pher Hesse, Mark Chen, Eric Sigler, Mateusz Litwin,
+ Scott Gray, Benjamin Chess, Jack Clark, Christopher
+ Berner, Sam McCandlish, Alec Radford, Ilya Sutskever,
+ and Dario Amodei. Language models are few-shot
+ learners. In Advances in Neural Information Processing
+ Systems 33: Annual Conference on Neural Information
+ Processing Systems 2020, NeurIPS 2020, December 6
+12, 2020, virtual, 2020.
+ [5] Nicolas Carion, Francisco Massa, Gabriel Synnaeve,
+ Nicolas Usunier, Alexander Kirillov, and Sergey
+ Zagoruyko. End-to-end object detection with transform
+ers. In Computer Vision- ECCV 2020- 16th European
+ Conference, Glasgow, UK, August 23-28, 2020, Proceed
+ings, Part I, pages 213–229, 2020.
+ [6] Anirban Chakraborty, Sarani Bhattacharya, Sayandeep
+ Saha, and Debdeep Mukhopadhyay. Explframe: Ex
+ploiting page frame cache for fault analysis of block
+ ciphers. In 2020 Design, Automation & Test in Europe
+ Conference &Exhibition,DATE 2020,Grenoble,France,
+ March 9-13, 2020, pages 1303–1306, 2020.
+ connections between active learning and model extrac
+tion. In 29th USENIX Security Symposium, USENIX
+ Security 2020, August 12-14, 2020, pages 1309–1326,
+ 2020.
+ [8] Bryant Chen, Wilka Carvalho, Nathalie Baracaldo,
+ Heiko Ludwig, Benjamin Edwards, Taesung Lee, Ian M.
+ Molloy, and Biplav Srivastava. Detecting backdoor at
+tacks on deep neural networks by activation clustering.
+ In Workshop on Artificial Intelligence Safety 2019 co
+located with the Thirty-Third AAAI Conference on Ar
+tificial Intelligence 2019 (AAAI-19), Honolulu, Hawaii,
+ January 27, 2019, 2019.
+ [9] Huili Chen, Cheng Fu, Jishen Zhao, and Farinaz
+ Koushanfar. Deepinspect: A black-box trojan detec
+tion and mitigation framework for deep neural net
+works. In Proceedings of the Twenty-Eighth Interna
+tional Joint Conference on Artificial Intelligence, IJCAI
+ 2019, Macao, China, August 10-16, 2019, pages 4658
+4664, 2019.
+ [10] Huili Chen, Cheng Fu, Jishen Zhao, and Farinaz
+ Koushanfar. Proflip: Targeted trojan attack with pro
+gressive bit flips. In 2021 IEEE/CVF International
+ Conference on Computer Vision, ICCV 2021, Montreal,
+ QC, Canada, October 10-17, 2021, pages 7698–7707,
+ 2021.
+ [11] Mark Chen, Alec Radford, Rewon Child, Jeffrey Wu,
+ Heewoo Jun, David Luan, and Ilya Sutskever. Genera
+tive pretraining from pixels. In Proceedings of the 37th
+ International Conference on Machine Learning, ICML
+ 2020, 13-18 July 2020, Virtual Event, pages 1691–1703,
+ 2020.
+ [12] Xinlei Chen, Haoqi Fan, Ross B. Girshick, and Kaiming
+ He. Improved baselines with momentum contrastive
+ learning. CoRR, abs/2003.04297, 2020.
+ [13] Xinlei Chen, Saining Xie, and Kaiming He. An empir
+ical study of training self-supervised vision transform
+ers. In 2021 IEEE/CVF International Conference on
+ Computer Vision, ICCV 2021, Montreal, QC, Canada,
+ October 10-17, 2021, pages 9620–9629, 2021.
+ [14] Aakanksha Chowdhery, Sharan Narang, Jacob De
+vlin, Maarten Bosma, Gaurav Mishra, Adam Roberts,
+ Paul Barham, Hyung Won Chung, Charles Sutton, Se
+bastian Gehrmann, Parker Schuh, Kensen Shi, Sasha
+ Tsvyashchenko, Joshua Maynez, Abhishek Rao, Parker
+ Barnes, Yi Tay, Noam Shazeer, Vinodkumar Prab
+hakaran, Emily Reif, Nan Du, Ben Hutchinson, Reiner
+ Pope, James Bradbury,Jacob Austin,Michael Isard,Guy
+ Gur-Ari, Pengcheng Yin, Toju Duke, Anselm Levskaya,
+ 1344    33rd USENIX Security Symposium
+ USENIX Association
+Sanjay Ghemawat, Sunipa Dev, Henryk Michalewski,
+ on Security and Privacy, SP 2020, San Francisco, CA,
+ Xavier Garcia, Vedant Misra, Kevin Robinson, Liam Fe
+dus, Denny Zhou, Daphne Ippolito, David Luan, Hyeon
+taek Lim, Barret Zoph, Alexander Spiridonov, Ryan Sep
+assi, David Dohan, Shivani Agrawal, Mark Omernick,
+ Andrew M. Dai, Thanumalayan Sankaranarayana Pil
+lai, Marie Pellat, Aitor Lewkowycz, Erica Moreira, Re
+won Child, Oleksandr Polozov, Katherine Lee, Zong
+wei Zhou, Xuezhi Wang, Brennan Saeta, Mark Diaz,
+ Orhan Firat, Michele Catasta, Jason Wei, Kathy Meier
+Hellstern, Douglas Eck, Jeff Dean, Slav Petrov, and
+ Noah Fiedel. Palm: Scaling language modeling with
+ pathways. CoRR, abs/2204.02311, 2022.
+ [15] Joseph Clements and Yingjie Lao. Hardware trojan
+ attacks on neural networks. CoRR, abs/1806.05768,
+ 2018.
+ [16] Finn de Ridder, Pietro Frigo, Emanuele Vannacci,
+ Herbert Bos, Cristiano Giuffrida, and Kaveh Razavi.
+ SMASH: synchronized many-sided rowhammer attacks
+ from javascript. In 30th USENIX Security Symposium,
+ USENIXSecurity2021,August11-13,2021,pages1001
+1018, 2021.
+ [17] Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, Kai Li,
+ and Li Fei-Fei. Imagenet: A large-scale hierarchical
+ image database. In 2009 IEEE Computer Society Con
+ference on Computer Vision and Pattern Recognition
+ (CVPR 2009), 20-25 June 2009, Miami, Florida, USA,
+ pages 248–255, 2009.
+ [18] Jacob Devlin, Ming-Wei Chang, Kenton Lee, and
+ Kristina Toutanova. BERT: pre-training of deep bidirec
+tional transformers for language understanding. CoRR,
+ abs/1810.04805, 2018.
+ [19] Linhao Dong, Shuang Xu, and Bo Xu. Speech
+transformer: a no-recurrence sequence-to-sequence
+ model for speech recognition. In 2018 IEEE Interna
+tional Conference on Acoustics, Speech and Signal Pro
+cessing (ICASSP), pages 5884–5888. IEEE, 2018.
+ [20] Alexey Dosovitskiy, Lucas Beyer, Alexander
+ Kolesnikov, Dirk Weissenborn, Xiaohua Zhai, Thomas
+ Unterthiner, Mostafa Dehghani, Matthias Minderer,
+ Georg Heigold, Sylvain Gelly, Jakob Uszkoreit, and
+ Neil Houlsby. An image is worth 16x16 words:
+ Transformers for image recognition at scale. In 9th
+ International Conference on Learning Representations,
+ ICLR 2021, Virtual Event, Austria, May 3-7, 2021,
+ 2021.
+ [21] Pietro Frigo, Emanuele Vannacci, Hasan Hassan, Victor
+ van der Veen, Onur Mutlu, Cristiano Giuffrida, Herbert
+ Bos, and Kaveh Razavi. Trrespass: Exploiting the many
+ sides of target row refresh. In 2020 IEEE Symposium
+ USA, May 18-21, 2020, pages 747–762, 2020.
+ [22] Daniel Gruss, Erik Kraft, Trishita Tiwari, Michael
+ Schwarz, Ari Trachtenberg, Jason Hennessey, Alex
+ Ionescu, and Anders Fogh. Page cache attacks. In Pro
+ceedings of the 2019 ACM SIGSAC Conference on Com
+puter and Communications Security, CCS 2019, London,
+ UK, November 11-15, 2019, pages 167–180, 2019.
+ [23] Tianyu Gu, Brendan Dolan-Gavitt, and Siddharth Garg.
+ Badnets: Identifying vulnerabilities in the machine
+ learning model supply chain. CoRR, abs/1708.06733,
+ 2017.
+ [24] Seungyeop Han, Haichen Shen, Matthai Philipose,
+ Sharad Agarwal, Alec Wolman, and Arvind Krishna
+murthy. MCDNN: an approximation-based execution
+ framework for deep stream processing under resource
+ constraints. In Proceedings of the 14th Annual Interna
+tional Conference on Mobile Systems, Applications, and
+ Services, MobiSys 2016, Singapore, June 26-30, 2016,
+ pages 123–136, 2016.
+ [25] Song Han, Huizi Mao, and William J. Dally. Deep
+ compression: Compressing deep neural network with
+ pruning, trained quantization and huffman coding. In
+ 4th International Conference on Learning Representa
+tions, ICLR 2016, San Juan, Puerto Rico, May 2-4, 2016,
+ Conference Track Proceedings, 2016.
+ [26] Hasan Hassan, Yahya Can Tugrul, Jeremie S Kim, Vic
+tor Van der Veen, Kaveh Razavi, and Onur Mutlu. Un
+covering in-dram rowhammer protection mechanisms:
+ Anewmethodology, custom rowhammer patterns, and
+ implications. In MICRO-54: 54th Annual IEEE/ACM
+ International Symposium on Microarchitecture, pages
+ 1198–1213, 2021.
+ [27] Kaiming He, Haoqi Fan, Yuxin Wu, Saining Xie, and
+ Ross B. Girshick. Momentum contrast for unsupervised
+ visual representation learning. In 2020 IEEE/CVF Con
+ference on Computer Vision and Pattern Recognition,
+ CVPR 2020, Seattle, WA, USA, June 13-19, 2020, pages
+ 9726–9735, 2020.
+ [28] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian
+ Sun. Deep residual learning for image recognition. In
+ 2016 IEEE Conference on Computer Vision and Pattern
+ Recognition, CVPR 2016, Las Vegas, NV, USA, June 27
+30, 2016, pages 770–778, 2016.
+ [29] Zhezhi He, Adnan Siraj Rakin, Jingtao Li, Chaitali
+ Chakrabarti, and Deliang Fan. Defending and harness
+ing the bit-flip based adversarial weight attack. In 2020
+ IEEE/CVF Conference on Computer Vision and Pattern
+ Recognition, CVPR 2020, Seattle, WA, USA, June 13-19,
+ 2020, pages 14083–14091, 2020.
+ USENIX Association
+ 33rd USENIX Security Symposium    1345
+[30] Dan Hendrycks and Thomas G. Dietterich. Benchmark
+2020 ACM/IEEE 47th Annual International Sympo
+ing neural network robustness to common corruptions
+ and perturbations. CoRR, abs/1807.01697, 2018.
+ [31] Sanghyun Hong, Pietro Frigo, Yigitcan Kaya, Cristiano
+ Giuffrida, and Tudor Dumitras. Terminal brain damage:
+ Exposing the graceless degradation in deep neural net
+works under hardware fault attacks. In 28th USENIX Se
+curity Symposium, USENIX Security 2019, Santa Clara,
+ CA, USA, August 14-16, 2019, pages 497–514, 2019.
+ [32] Itay Hubara, Matthieu Courbariaux, Daniel Soudry, Ran
+ El-Yaniv, and Yoshua Bengio. Quantized neural net
+works: Training neural networks with low precision
+ weights and activations. J. Mach. Learn. Res., 18:187:1
+187:30, 2017.
+ [33] Forrest N. Iandola, Matthew W. Moskewicz, Khalid
+ Ashraf, Song Han, William J. Dally, and Kurt Keutzer.
+ Squeezenet: Alexnet-level accuracy with 50x fewer pa
+rameters and <1mb model size. CoRR, abs/1602.07360,
+ 2016.
+ [34] Matthew Jagielski, Nicholas Carlini, David Berthelot,
+ Alex Kurakin, and Nicolas Papernot. High accuracy
+ and high fidelity extraction of neural networks. In 29th
+ USENIX Security Symposium, USENIX Security 2020,
+ August 12-14, 2020, pages 1345–1362, 2020.
+ [35] Patrick Jattke, Victor van der Veen, Pietro Frigo, Stijn
+ Gunter, and Kaveh Razavi. Blacksmith: Scalable
+ rowhammering in the frequency domain. In 2022 IEEE
+ Symposium on Security and Privacy (SP), volume 1,
+ 2022.
+ [36] Patrick Jattke, Victor van der Veen, Pietro Frigo, Stijn
+ Gunter, and Kaveh Razavi. Blacksmith: Scalable
+ rowhammering in the frequency domain. In 2022 IEEE
+ Symposium on Security and Privacy (SP), volume 1,
+ 2022.
+ [37] Jinyuan Jia, Yupei Liu, and Neil Zhenqiang Gong.
+ Badencoder: Backdoor attacks to pre-trained encoders
+ in self-supervised learning. In 43rd IEEE Symposium
+ on Security and Privacy, SP 2022, San Francisco, CA,
+ USA, May 22-26, 2022, pages 2043–2059, 2022.
+ [38] Lavender Yao Jiang, Xujin Chris Liu, Nima Pour Ne
+jatian, Mustafa Nasir-Moin, Duo Wang, Anas Abidin,
+ Kevin Eaton,Howard AntonyRiina,Ilya Laufer,Paawan
+ Punjabi, et al. Health system-scale language models are
+ all-purpose prediction engines. Nature, pages 1–6, 2023.
+ [39] Jeremie S Kim, Minesh Patel, A Giray Ya˘glıkçı, Hasan
+ Hassan, Roknoddin Azizi, Lois Orosa, and Onur Mutlu.
+ Revisiting rowhammer: An experimental analysis of
+ modern dram devices and mitigation techniques. In
+ sium on Computer Architecture (ISCA), pages 638–651.
+ IEEE, 2020.
+ [40] Yoongu Kim, Ross Daly, Jeremie S. Kim, Chris Fallin,
+ Ji-Hye Lee, Donghyuk Lee, Chris Wilkerson, Konrad
+ Lai, and Onur Mutlu. Flipping bits in memory with
+out accessing them: An experimental study of DRAM
+ disturbance errors. In ACM/IEEE 41st International
+ Symposium on Computer Architecture, ISCA 2014, Min
+neapolis, MN, USA, June 14-18, 2014, pages 361–372,
+ 2014.
+ [41] Alexander Kirillov, Eric Mintun, Nikhila Ravi, Hanzi
+ Mao, Chloé Rolland, Laura Gustafson, Tete Xiao,
+ Spencer Whitehead, Alexander C. Berg, Wan-Yen Lo,
+ Piotr Dollár, and Ross B. Girshick. Segment anything.
+ CoRR, abs/2304.02643, 2023.
+ [42] Alex Krizhevsky, Vinod Nair, and Geoffrey Hinton.
+ Cifar-10 (canadian institute for advanced research). URL
+ http://www. cs. toronto. edu/kriz/cifar. html, 2010.
+ [43] AlexKrizhevsky,Ilya Sutskever,and Geoffrey E. Hinton.
+ Imagenet classification with deep convolutional neural
+ networks. Commun. ACM, 60(6):84–90, 2017.
+ [44] Jingtao Li, Adnan Siraj Rakin, Zhezhi He, Deliang Fan,
+ and Chaitali Chakrabarti. RADAR: run-time adversar
+ial weight attack detection and accuracy recovery. In
+ Design, Automation & Test in Europe Conference & Ex
+hibition, DATE 2021, Grenoble, France, February 1-5,
+ 2021, pages 790–795, 2021.
+ [45] Wenshuo Li, Jincheng Yu, Xuefei Ning, Pengjun Wang,
+ Qi Wei, Yu Wang, and Huazhong Yang. Hu-fu:
+ Hardware and software collaborative attack framework
+ against neural networks. In 2018 IEEE Computer So
+ciety Annual Symposium on VLSI, ISVLSI 2018, Hong
+ Kong, China, July 8-11, 2018, pages 482–487, 2018.
+ [46] Yu Li, Min Li, Bo Luo, Ye Tian, and Qiang Xu. Deep
+dyve: Dynamic verification for deep neural networks.
+ In CCS ’20: 2020 ACM SIGSAC Conference on Com
+puter and Communications Security, Virtual Event, USA,
+ November 9-13, 2020, pages 101–112, 2020.
+ [47] Qi Liu, Wujie Wen, and Yanzhi Wang. Concurrent
+ weight encoding-based detection for bit-flip attack on
+ neural network accelerators. In IEEE/ACM Interna
+tional Conference On Computer Aided Design, ICCAD
+ 2020, San Diego, CA, USA, November 2-5, 2020, pages
+ 37:1–37:8, 2020.
+ [48] Yingqi Liu, Shiqing Ma, Yousra Aafer, Wen-Chuan
+ Lee, Juan Zhai, Weihang Wang, and Xiangyu Zhang.
+ Trojaning attack on neural networks. In 25th Annual
+ 1346    33rd USENIX Security Symposium
+ USENIX Association
+Network and Distributed System Security Symposium,
+ NDSS 2018, San Diego, California, USA, February 18
+21, 2018, 2018.
+ [49] Ze Liu, Yutong Lin, Yue Cao, Han Hu, Yixuan Wei,
+ Zheng Zhang, Stephen Lin, and Baining Guo. Swin
+ transformer: Hierarchical vision transformer using
+ shifted windows. In 2021 IEEE/CVF International Con
+ference on Computer Vision, ICCV 2021, Montreal, QC,
+ Canada, October 10-17, 2021, pages 9992–10002, 2021.
+ [50] Jun Ma and Bo Wang. Segment anything in medical
+ images. CoRR, abs/2304.12306, 2023.
+ [51] Michele Marazzi,Patrick Jattke,Flavien Solt,and Kaveh
+ Razavi. Protrr: Principled yet optimal in-dram target
+ row refresh. In 2022 IEEE Symposium on Security and
+ Privacy (SP), pages 735–753. IEEE, 2022.
+ [52] Onur Mutlu, Ataberk Olgun, and A Giray Ya˘glıkçı.
+ Fundamentally understanding and solving rowhammer.
+ arXiv preprint arXiv:2211.07613, 2022.
+ [53] Lois Orosa, Abdullah Giray Yaglikci, Haocong Luo,
+ Ataberk Olgun, Jisung Park, Hasan Hassan, Minesh Pa
+tel, Jeremie S Kim, and Onur Mutlu. A deeper look
+ into rowhammer’s sensitivities: Experimental analysis
+ of real dram chips and implications on future attacks
+ and defenses. In MICRO-54: 54th Annual IEEE/ACM
+ International Symposium on Microarchitecture, pages
+ 1182–1197, 2021.
+ [54] YeonhongPark,WoosukKwon,EojinLee,TaeJunHam,
+ Jung Ho Ahn, and Jae W Lee. Graphene: Strong yet
+ lightweight row hammer protection. In 2020 53rd An
+nual IEEE/ACM International Symposium on Microar
+chitecture (MICRO), pages 1–13. IEEE, 2020.
+ [55] Minesh Patel, Jeremie S Kim, Taha Shahroodi, Hasan
+ Hassan, and Onur Mutlu. Bit-exact ecc recovery (beer):
+ Determining dram on-die ecc functions by exploiting
+ dram data retention characteristics. In 2020 53rd Annual
+ IEEE/ACM International Symposium on Microarchitec
+ture (MICRO), pages 282–297. IEEE, 2020.
+ [56] Peter Pessl, Daniel Gruss, Clémentine Maurice, Michael
+ Schwarz, and Stefan Mangard. {DRAMA}: Exploit
+ing {DRAM} addressing for {Cross-CPU} attacks. In
+ 25th USENIX security symposium (USENIX security
+ 16), pages 565–581, 2016.
+ [57] Adnan Siraj Rakin, Md Hafizul Islam Chowdhuryy, Fan
+ Yao, and Deliang Fan. Deepsteal: Advanced model
+ extractions leveraging efficient weight stealing in mem
+ories. In 43rd IEEE Symposium on Security and Privacy,
+ SP 2022, San Francisco, CA, USA, May 22-26, 2022,
+ pages 1157–1174, 2022.
+ [58] Adnan Siraj Rakin, Zhezhi He, and Deliang Fan. Bit
+f
+ lip attack: Crushing neural network with progressive
+ bit search. In 2019 IEEE/CVF International Conference
+ on Computer Vision, ICCV 2019, Seoul, Korea (South),
+ October 27- November2,2019,pages 1211–1220,2019.
+ [59] Adnan Siraj Rakin, Zhezhi He, and Deliang Fan. TBT:
+ targeted neural network attack with bit trojan. In 2020
+ IEEE/CVF Conference on Computer Vision and Pattern
+ Recognition, CVPR 2020, Seattle, WA, USA, June 13-19,
+ 2020,pages 13195–13204. ComputerVision Foundation
+ / IEEE, 2020.
+ [60] Adnan Siraj Rakin, Yukui Luo, Xiaolin Xu, and Deliang
+ Fan. Deep-dup: Anadversarialweightduplication attack
+ framework to crush deep neural network in multi-tenant
+ FPGA. In 30th USENIX Security Symposium, USENIX
+ Security 2021, August 11-13, 2021, pages 1919–1936,
+ 2021.
+ [61] Ahmed Salem, Yang Zhang, Mathias Humbert, Pascal
+ Berrang, Mario Fritz, and Michael Backes. Ml-leaks:
+ Model and data independent membership inference at
+tacks and defenses on machine learning models. In
+ 26th Annual Network and Distributed System Security
+ Symposium, NDSS 2019, San Diego, California, USA,
+ February 24-27, 2019, 2019.
+ [62] Nita Shah and Poonam Mishra. Unconstrained Multi
+variable Optimization, pages 15–29. 11 2020.
+ [63] KarenSimonyanandAndrewZisserman. Verydeepcon
+volutional networks for large-scale image recognition.
+ In 3rd International Conference on Learning Represen
+tations, ICLR 2015, San Diego, CA,USA,May 7-9,2015,
+ Conference Track Proceedings, 2015.
+ [64] Fei Sun, Jun Liu, Jian Wu, Changhua Pei, Xiao Lin,
+ Wenwu Ou, and Peng Jiang. Bert4rec: Sequential rec
+ommendation with bidirectional encoder representations
+ from transformer. In Proceedings of the 28th ACM in
+ternational conference on information and knowledge
+ management, pages 1441–1450, 2019.
+ [65] Yaniv Taigman, Ming Yang, Marc’Aurelio Ranzato, and
+ Lior Wolf. Deepface: Closing the gap to human-level
+ performance in face verification. In 2014 IEEE Con
+ference on Computer Vision and Pattern Recognition,
+ CVPR 2014, Columbus, OH, USA, June 23-28, 2014,
+ pages 1701–1708, 2014.
+ [66] Di Tang, XiaoFeng Wang, Haixu Tang, and Kehuan
+ Zhang. Demon in the variant: Statistical analysis of
+ dnns for robust backdoor contamination detection. In
+ Michael Bailey and Rachel Greenstadt, editors, 30th
+ USENIX Security Symposium, USENIX Security 2021,
+ August 11-13, 2021, pages 1541–1558. USENIX Asso
+ciation, 2021.
+ USENIX Association
+ 33rd USENIX Security Symposium    1347
+[67] Ruixiang Tang, Mengnan Du, Ninghao Liu, Fan Yang,
+ [76] A Giray Ya˘ glikçi, Minesh Patel, Jeremie S Kim, Rokn
+and Xia Hu. An embarrassingly simple approach for
+ trojan attack in deep neural networks. In KDD ’20: The
+ 26th ACM SIGKDD Conference on Knowledge Discov
+ery and Data Mining, Virtual Event, CA, USA, August
+ 23-27, 2020, pages 218–228, 2020.
+ [68] M. Caner Tol, Saad Islam, Berk Sunar, and Ziming
+ Zhang. Toward realistic backdoor injection attacks on
+ dnns using rowhammer, 2021.
+ [69] Venkatanathan Varadarajan, Yinqian Zhang, Thomas
+ Ristenpart, and Michael M. Swift. A placement vul
+nerability study in multi-tenant public clouds. In 24th
+ USENIX Security Symposium, USENIX Security 15,
+ Washington, D.C., USA, August 12-14, 2015, pages 913
+928, 2015.
+ [70] Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob
+ Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser,
+ and Illia Polosukhin. Attention is all you need. In
+ Advances in Neural Information Processing Systems 30:
+ Annual Conference on Neural Information Processing
+ Systems 2017, December 4-9, 2017, Long Beach, CA,
+ USA, pages 5998–6008, 2017.
+ [71] Bolun Wang, Yuanshun Yao, Shawn Shan, Huiying Li,
+ Bimal Viswanath, Haitao Zheng, and Ben Y. Zhao. Neu
+ral cleanse: Identifying and mitigating backdoor attacks
+ in neural networks. In 2019 IEEE Symposium on Se
+curity and Privacy, SP 2019, San Francisco, CA, USA,
+ May 19-23, 2019, pages 707–723, 2019.
+ [72] Minghua Wang, Zhi Zhang, Yueqiang Cheng, and Surya
+ Nepal. Dramdig: A knowledge-assisted tool to uncover
+ dram address mapping. In 2020 57th ACM/IEEE Design
+ Automation Conference (DAC), pages 1–6. IEEE, 2020.
+ [73] Junde Wu, Rao Fu, Huihui Fang, Yuanpei Liu, Zhaowei
+ Wang, Yanwu Xu, Yueming Jin, and Tal Arbel. Medical
+ SAM adapter: Adapting segment anything model for
+ medical image segmentation. CoRR, abs/2304.12620,
+ 2023.
+ [74] Yuan Xiao, Xiaokuan Zhang, Yinqian Zhang, and Radu
+ Teodorescu. One bit flips, one cloud flops: Cross
+vm row hammer attacks and privilege escalation. In
+ 25th USENIX Security Symposium, USENIX Security
+ 16, Austin, TX, USA, August 10-12, 2016, pages 19–35,
+ 2016.
+ [75] Zhang Xu, Haining Wang, and Zhenyu Wu. A measure
+ment study on co-residence threat inside the cloud. In
+ 24th USENIX Security Symposium, USENIX Security
+ 15, Washington, D.C., USA, August 12-14, 2015, pages
+ 929–944, 2015.
+ oddin Azizi, Ataberk Olgun, Lois Orosa, Hasan Has
+san, Jisung Park, Konstantinos Kanellopoulos, Taha
+ Shahroodi, et al. Blockhammer: Preventing rowham
+mer at low cost by blacklisting rapidly-accessed dram
+ rows. In 2021 IEEE International Symposium on High
+Performance Computer Architecture (HPCA), pages
+ 345–358. IEEE, 2021.
+ [77] FanYao,AdnanSirajRakin,andDeliangFan. Deepham
+mer: Depleting the intelligence of deep neural networks
+ through targeted chain of bit flips. In 29th USENIX Secu
+rity Symposium, USENIX Security 2020, August 12-14,
+ 2020, pages 1463–1480, 2020.
+ [78] Yuval Yarom and Katrina Falkner. FLUSH+RELOAD:
+ A high resolution, low noise, L3 cache side-channel
+ attack. In Proceedings of the 23rd USENIX Security
+ Symposium, San Diego, CA, USA, August 20-22, 2014,
+ pages 719–732, 2014.
+ [79] Shuchang Zhou, Zekun Ni, Xinyu Zhou, He Wen, Yuxin
+ Wu,andYuheng Zou. Dorefa-net: Training low bitwidth
+ convolutional neural networks with low bitwidth gradi
+ents. CoRR, abs/1606.06160, 2016.
+ Appendix
+ A Memorytemplating
+ Memorytemplating aims to scan the memory for bit locations
+ that are vulnerable to bit flips in order to deterministically
+ induce bit flips in the target model. The attacker should first
+ comprehend the physical address to row mapping scheme in
+ order to perform the rowhammer. We reverse-engineer the
+ DRAMaddressing schemes with a specific hardware config
+uration using techniques proposed in [56]. To profile on the
+ DDR4memorywhichareprotected from DDR3 double-sided
+ Rowhammerattacks,we basically follow the techniques in the
+ TRRespass tool [21], where multiple rows of DRAM are ac
+cessed sequentially resulting in flips on the memory. In detail,
+ a victim is produced above the attacker row, and an attacker
+ is formed above the new victim a variable number of times
+ rather than just one row above and below the victim row being
+ read. The normal operation of the underlying system will not
+ be unaffected because the profiling is done in the attacker’s
+ own memory space. A list of physical pages with their page
+ frame numbers, vulnerable bit offsets and flip directions are
+ generated during the memory templating phase.
+ 1348    33rd USENIX Security Symposium
+ USENIX Association
