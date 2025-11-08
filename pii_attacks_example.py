@@ -71,7 +71,13 @@ class PIIDataset(Dataset):
     def __getitem__(self, idx):
         features = torch.tensor(self.X[idx], dtype=torch.float32)
         label = torch.tensor(self.y[idx], dtype=torch.long)
-        return features, label
+        # Return as dict to match evaluation function expectations
+        # Use dummy attention_mask since this simple model doesn't use it
+        return {
+            'input_ids': features,
+            'attention_mask': torch.ones(features.shape[0], dtype=torch.long),
+            'labels': label
+        }
 
 class PIIDetectionModel(nn.Module):
     def __init__(self, input_dim=100):
@@ -80,7 +86,10 @@ class PIIDetectionModel(nn.Module):
         self.fc2 = nn.Linear(64, 32)
         self.fc3 = nn.Linear(32, 2)  # 2 classes: contains PII or not
         
-    def forward(self, x):
+    def forward(self, x=None, input_ids=None, attention_mask=None, **kwargs):
+        # Accept both simple tensor input and transformer-style kwargs
+        if input_ids is not None:
+            x = input_ids
         x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
@@ -103,8 +112,9 @@ def train_model(train_csv='data/pii_dataset_train.csv', epochs=10):
         correct = 0
         total = 0
         
-        for inputs, labels in train_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
+        for batch in train_loader:
+            inputs = batch['input_ids'].to(device)
+            labels = batch['labels'].to(device)
             
             optimizer.zero_grad()
             outputs = model(inputs)
@@ -143,8 +153,9 @@ def evaluate_model(model, test_dataset, device):
     print("-" * 80)
     
     with torch.no_grad():
-        for inputs, labels in test_loader:
-            inputs, labels = inputs.to(device), labels.to(device)
+        for batch in test_loader:
+            inputs = batch['input_ids'].to(device)
+            labels = batch['labels'].to(device)
             outputs = model(inputs)
             _, predicted = outputs.max(1)
             
@@ -242,8 +253,9 @@ def run_pii_attack():
     test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False)
     count = 0
     with torch.no_grad():
-        for i, (inputs, labels) in enumerate(test_loader):
-            inputs = inputs.to(device)
+        for i, batch in enumerate(test_loader):
+            inputs = batch['input_ids'].to(device)
+            labels = batch['labels']
             outputs = model(inputs)
             _, predicted = outputs.max(1)
             

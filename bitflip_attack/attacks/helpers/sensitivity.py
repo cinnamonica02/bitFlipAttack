@@ -111,30 +111,28 @@ def rank_layers_by_sensitivity(model, dataset, layer_info, device,
         dataset, batch_size=min(n_samples, len(dataset)), shuffle=True
     )
     
-    try:
-        inputs, targets = next(iter(dataloader))
+    batch = next(iter(dataloader))
+    
+    # Handle different batch formats
+    if isinstance(batch, dict):
+        # Dictionary batch (common in transformers)
+        # Move all tensors to device
+        batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
+        targets = batch['labels']
+        # Keep inputs as dict with input_ids and attention_mask for model forward
+        inputs = {'input_ids': batch['input_ids']}
+        if 'attention_mask' in batch:
+            inputs['attention_mask'] = batch['attention_mask']
+    elif isinstance(batch, (list, tuple)) and len(batch) >= 2:
+        # Tuple/list batch (traditional format)
+        inputs, targets = batch[0], batch[1]
         if isinstance(inputs, dict):
-            # Handle dictionary inputs (common in huggingface datasets)
             inputs = {k: v.to(device) for k, v in inputs.items()}
         else:
             inputs = inputs.to(device)
-        
-        if isinstance(targets, dict):
-            targets = {k: v.to(device) for k, v in targets.items()}
-        else:
-            targets = targets.to(device)
-    except:
-        # If dataset structure is different, try unpacking with custom logic
-        batch = next(iter(dataloader))
-        if isinstance(batch, (list, tuple)) and len(batch) >= 2:
-            inputs, targets = batch[0], batch[1]
-            if isinstance(inputs, dict):
-                inputs = {k: v.to(device) for k, v in inputs.items()}
-            else:
-                inputs = inputs.to(device)
-            targets = targets.to(device)
-        else:
-            raise ValueError("Unable to extract inputs and targets from dataset")
+        targets = targets.to(device)
+    else:
+        raise ValueError("Unable to extract inputs and targets from dataset")
     
     # Put model in evaluation mode but enable grad tracking
     model.eval()
