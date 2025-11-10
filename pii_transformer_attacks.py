@@ -32,16 +32,8 @@ class PIITransformerDataset(Dataset):
         self.tokenizer = tokenizer
         self.max_length = max_length
         
-        # Create text samples from medical records
-        self.texts = self.data.apply(
-            lambda row: f"Patient ID: {row['patient_id']}, Name: {row['patient_name']}, " \
-                       f"DOB: {row['dob']}, Age: {row['age']}, Gender: {row['gender']}, " \
-                       f"Visit Date: {row['visit_date']}, Diagnosis: {row['diagnosis']}, " \
-                       f"Severity: {row['severity']}, Clinical Notes: {row['clinical_note']}, " \
-                       f"Summary: {row['summary']}",
-            axis=1
-        ).tolist()
-        
+        # Use text column directly from the CSV (works with both old and new formats)
+        self.texts = self.data['text'].tolist()
         self.labels = self.data['contains_pii'].values
         
     def __len__(self):
@@ -205,57 +197,30 @@ def fine_tune_model(model, train_loader, val_loader, device,
                    batch_size=16,
                    accumulation_steps=4,
                    max_grad_norm=1.0):
-    """Fine-tune the pre-trained model with DeepSpeed ZeRO optimizations"""
+    """Fine-tune the pre-trained model with standard PyTorch training"""
+    print("Setting up standard PyTorch training (avoiding DeepSpeed issues with quantized models)...")
+    
     model.to(device)
+    
+    # Use standard PyTorch optimizer
+    optimizer = torch.optim.AdamW(
+        [p for p in model.parameters() if p.requires_grad], 
+        lr=2e-5,  # Standard learning rate for BERT fine-tuning
+        weight_decay=0.01,
+        eps=1e-8
+    )
     
     # Calculate warmup steps (10% of total steps)
     num_training_steps = len(train_loader) * epochs
     num_warmup_steps = num_training_steps // 10
     
-    # Configure DeepSpeed with ZeRO optimization
-    ds_config = {
-        "train_batch_size": batch_size * accumulation_steps,
-        "fp16": {
-            "enabled": False  # Disable FP16 since we're using 4-bit quantization
-        },
-        "bf16": {
-            "enabled": False  # Disable BF16 as well
-        },
-        "zero_optimization": {
-            "stage": 2,
-            "allgather_partitions": True,
-            "reduce_scatter": True,
-            "overlap_comm": True,
-            "contiguous_gradients": True
-        },
-        "gradient_accumulation_steps": accumulation_steps,
-        "gradient_clipping": max_grad_norm,
-        "train_micro_batch_size_per_gpu": batch_size,
-        "optimizer": {
-            "type": "Adam",
-            "params": {
-                "lr": 2e-5,
-                "betas": [0.9, 0.999],
-                "eps": 1e-8,
-                "weight_decay": 0.01
-            }
-        },
-        "scheduler": {
-            "type": "WarmupLR",
-            "params": {
-                "warmup_min_lr": 0,
-                "warmup_max_lr": 2e-5,
-                "warmup_num_steps": num_warmup_steps,  # Use calculated steps instead of "auto"
-                "warmup_type": "linear"
-            }
-        }
-    }
-
-    # Initialize DeepSpeed engine
-    model_engine, optimizer, _, scheduler = deepspeed.initialize(
-        model=model,
-        config=ds_config
-    )
+    # Simple linear warmup + decay scheduler
+    def lr_lambda(step):
+        if step < num_warmup_steps:
+            return step / max(1, num_warmup_steps)
+        return max(0.1, (num_training_steps - step) / max(1, num_training_steps - num_warmup_steps))
+    
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
     # Early stopping parameters
     best_val_loss = float('inf')
@@ -263,29 +228,37 @@ def fine_tune_model(model, train_loader, val_loader, device,
     patience_counter = 0
     
     for epoch in range(epochs):
-        model_engine.train()
+        model.train()
         total_train_loss = 0
         num_train_steps = 0
+        optimizer.zero_grad()
         
         for batch_idx, (inputs, labels) in enumerate(train_loader):
             input_ids = inputs['input_ids'].to(device)
             attention_mask = inputs['attention_mask'].to(device)
             labels = labels.to(device)
             
-            outputs = model_engine(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+            outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
             loss = outputs.loss / accumulation_steps
             
-            model_engine.backward(loss)
+            loss.backward()
             
             if (batch_idx + 1) % accumulation_steps == 0:
-                model_engine.step()
-                total_train_loss += loss.item() * accumulation_steps
-                num_train_steps += 1
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+                optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
+                
+            total_train_loss += loss.item() * accumulation_steps
+            num_train_steps += 1
+            
+            if batch_idx % 10 == 0:
+                print(f"Batch {batch_idx}, Loss: {loss.item() * accumulation_steps:.4f}")
         
         avg_train_loss = total_train_loss / num_train_steps
         
         # Validation
-        model_engine.eval()
+        model.eval()
         total_val_loss = 0
         num_val_steps = 0
         
@@ -295,7 +268,7 @@ def fine_tune_model(model, train_loader, val_loader, device,
                 attention_mask = inputs['attention_mask'].to(device)
                 labels = labels.to(device)
                 
-                outputs = model_engine(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+                outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
                 loss = outputs.loss
                 
                 total_val_loss += loss.item()
@@ -318,7 +291,7 @@ def fine_tune_model(model, train_loader, val_loader, device,
                 print(f"Early stopping triggered after {epoch + 1} epochs")
                 break
 
-    return model_engine
+    return model
 
 def run_pii_transformer_attack(model_name="bert-base-uncased", 
                              target_class=1, 
@@ -334,21 +307,20 @@ def run_pii_transformer_attack(model_name="bert-base-uncased",
     print("Loading tokenizer and model...")
     tokenizer = BertTokenizer.from_pretrained(model_name)
     
-    # Load model with 4-bit quantization
-    quantization_config = get_4bit_config()
+    # Load model WITHOUT quantization for training (quantization causes NaN gradients)
+    print("Loading model in full precision for stable training...")
     model = BertForSequenceClassification.from_pretrained(
         model_name,
-        num_labels=2,
-        quantization_config=quantization_config
+        num_labels=2
     )
     
-    print("4-bit quantized model loaded successfully!")
+    print("Full precision model loaded successfully!")
     model.to(device)
     
     # Load and split dataset
     try:
         print("Loading dataset...")
-        dataset = PIITransformerDataset('data/medical_pii_dataset_train.csv', tokenizer)
+        dataset = PIITransformerDataset('data/pii_dataset_train_v2.csv', tokenizer)
         train_loader, val_loader, test_loader = create_dataloaders(
             dataset,
             batch_size=batch_size,
