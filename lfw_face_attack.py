@@ -97,19 +97,26 @@ class LFWFaceDataset(Dataset):
         return len(self.images)
     
     def __getitem__(self, idx):
-        # Load image
-        if isinstance(self.images[idx], str):
-            # Load from file path
-            image = Image.open(self.images[idx]).convert('RGB')
-        else:
-            # Already numpy array from sklearn
-            image = Image.fromarray((self.images[idx] * 255).astype(np.uint8))
-        
-        if self.transform:
-            image = self.transform(image)
-        
-        label = self.labels[idx]
-        return image, label
+        # Load image with error handling for corrupted files
+        try:
+            if isinstance(self.images[idx], str):
+                # Load from file path
+                image = Image.open(self.images[idx]).convert('RGB')
+            else:
+                # Already numpy array from sklearn
+                image = Image.fromarray((self.images[idx] * 255).astype(np.uint8))
+            
+            if self.transform:
+                image = self.transform(image)
+            
+            label = self.labels[idx]
+            return image, label
+        except Exception as e:
+            # Skip corrupted images by returning a black placeholder
+            print(f"Warning: Skipping corrupted image {self.images[idx]}: {e}")
+            # Return a black image as placeholder
+            black_image = torch.zeros(3, 64, 64)  # Assuming 64x64 size
+            return black_image, self.labels[idx]
 
 
 class NonFaceDataset(Dataset):
