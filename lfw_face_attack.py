@@ -66,18 +66,31 @@ class LFWFaceDataset(Dataset):
         if os.path.exists(data_dir):
             self.images = []
             self.labels = []
+            corrupted_count = 0
             
-            # Walk through LFW directory
+            # Walk through LFW directory and validate images
+            print("Validating LFW images...")
             for person_name in os.listdir(data_dir):
                 person_dir = os.path.join(data_dir, person_name)
                 if os.path.isdir(person_dir):
                     for img_file in os.listdir(person_dir):
                         if img_file.endswith(('.jpg', '.png', '.jpeg')):
                             img_path = os.path.join(person_dir, img_file)
-                            self.images.append(img_path)
-                            self.labels.append(1)  # Face present
+                            # Validate image can be opened
+                            try:
+                                test_img = Image.open(img_path)
+                                test_img.verify()  # Check if it's a valid image
+                                self.images.append(img_path)
+                                self.labels.append(1)  # Face present
+                            except Exception as e:
+                                corrupted_count += 1
+                                if corrupted_count <= 10:  # Print first 10
+                                    print(f"  Skipping corrupted: {img_path}")
+                                    print(f"    Error: {e}")
             
-            print(f"✓ Loaded {len(self.images)} face images from LFW directory")
+            print(f"✓ Loaded {len(self.images)} valid face images from LFW directory")
+            if corrupted_count > 0:
+                print(f"⚠ Skipped {corrupted_count} corrupted/invalid images during loading")
         
         else:
             print(f"LFW directory not found at {data_dir}")
