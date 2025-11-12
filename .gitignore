@@ -15,3 +15,5 @@ best_model.pt
 original_model.pt
 pii_model.pth
 results/
+.specstory/
+attack_run.log
