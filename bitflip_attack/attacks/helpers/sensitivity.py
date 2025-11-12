@@ -43,14 +43,26 @@ def compute_sensitivity(model, layer, inputs, targets,
     # Forward pass with custom function if provided
     if custom_forward_fn is not None:
         # Reconstruct the dictionary batch expected by custom_forward_fn
-        # `inputs` here is the dictionary {'input_ids':..., 'attention_mask':...}
-        # `targets` is the labels tensor
-        batch = inputs.copy() # Start with input_ids, attention_mask
-        batch['labels'] = targets # Add labels back in
+        if isinstance(inputs, dict):
+            # NLP model: {'input_ids':..., 'attention_mask':...}
+            batch = inputs.copy()
+            batch['labels'] = targets
+        else:
+            # Vision model: inputs is a tensor
+            batch = {'image': inputs, 'label': targets}
         outputs = custom_forward_fn(model, batch)
     else:
-        # Standard model call (assuming it takes dict or specific args)
-        outputs = model(**inputs)
+        # Standard model call
+        if isinstance(inputs, dict):
+            # NLP model with dict inputs
+            outputs = model(**inputs)
+        else:
+            # Vision model with tensor input
+            outputs = model(inputs)
+    
+    # Handle different output formats
+    if isinstance(outputs, dict) and 'logits' in outputs:
+        outputs = outputs['logits']
     
     loss = F.cross_entropy(outputs, targets)
     
@@ -115,14 +127,23 @@ def rank_layers_by_sensitivity(model, dataset, layer_info, device,
     
     # Handle different batch formats
     if isinstance(batch, dict):
-        # Dictionary batch (common in transformers)
+        # Dictionary batch (common in transformers and vision models)
         # Move all tensors to device
         batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-        targets = batch['labels']
-        # Keep inputs as dict with input_ids and attention_mask for model forward
-        inputs = {'input_ids': batch['input_ids']}
-        if 'attention_mask' in batch:
-            inputs['attention_mask'] = batch['attention_mask']
+        
+        # Support both vision models (image/label) and NLP models (input_ids/labels)
+        if 'image' in batch:
+            # Vision model
+            inputs = batch['image']
+            targets = batch['label']
+        elif 'input_ids' in batch:
+            # NLP model
+            targets = batch['labels']
+            inputs = {'input_ids': batch['input_ids']}
+            if 'attention_mask' in batch:
+                inputs['attention_mask'] = batch['attention_mask']
+        else:
+            raise ValueError(f"Batch must contain either 'image' or 'input_ids', got keys: {batch.keys()}")
     elif isinstance(batch, (list, tuple)) and len(batch) >= 2:
         # Tuple/list batch (traditional format)
         inputs, targets = batch[0], batch[1]
@@ -183,12 +204,26 @@ def rank_layers_by_sensitivity(model, dataset, layer_info, device,
             model.zero_grad()
             if custom_forward_fn is not None:
                 # Reconstruct the dictionary batch expected by custom_forward_fn
-                batch = inputs.copy() # Start with input_ids, attention_mask
-                batch['labels'] = targets # Add labels back in
+                if isinstance(inputs, dict):
+                    # NLP model
+                    batch = inputs.copy()
+                    batch['labels'] = targets
+                else:
+                    # Vision model
+                    batch = {'image': inputs, 'label': targets}
                 outputs = custom_forward_fn(model, batch)
             else:
-                # Standard model call (assuming it takes dict or specific args)
-                outputs = model(**inputs)
+                # Standard model call
+                if isinstance(inputs, dict):
+                    # NLP model with dict inputs
+                    outputs = model(**inputs)
+                else:
+                    # Vision model with tensor input
+                    outputs = model(inputs)
+            
+            # Handle different output formats
+            if isinstance(outputs, dict) and 'logits' in outputs:
+                outputs = outputs['logits']
                 
             loss = F.cross_entropy(outputs, targets)
             

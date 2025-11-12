@@ -39,12 +39,19 @@ def select_bit_candidates(model, dataset, layer, n_candidates=1000,
             raise TypeError(f"select_bit_candidates expects batch to be a dict, but received {type(batch)}")
 
         # Extract tensors from dictionary and move to device
-        input_ids = batch['input_ids'].to(device)
-        attention_mask = batch['attention_mask'].to(device)
-        targets = batch['labels'].to(device)
-        
-        # Prepare inputs for model (usually expects dict or specific args)
-        inputs = {'input_ids': input_ids, 'attention_mask': attention_mask}
+        # Support both vision models (image/label) and NLP models (input_ids/labels)
+        if 'image' in batch:
+            # Vision model
+            inputs = batch['image'].to(device)
+            targets = batch['label'].to(device)
+        elif 'input_ids' in batch:
+            # NLP model
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+            targets = batch['labels'].to(device)
+            inputs = {'input_ids': input_ids, 'attention_mask': attention_mask}
+        else:
+            raise ValueError(f"Batch must contain either 'image' or 'input_ids', got keys: {batch.keys()}")
         
     except StopIteration:
          raise ValueError("Dataset is empty, cannot select bit candidates.")
