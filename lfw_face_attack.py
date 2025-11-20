@@ -155,8 +155,8 @@ class NonFaceDataset(Dataset):
         cifar_data = torchvision.datasets.CIFAR10(root=data_dir, train=True, 
                                                    download=True, transform=None)
         
-        # Filter to non-animal classes
-        non_face_classes = [0, 1, 8, 9]  # airplane, automobile, ship, truck
+        # Use animals (more confusable with faces due to organic shapes, eyes, fur)
+        non_face_classes = [2, 3, 4, 5, 6, 7]  # bird, cat, deer, dog, frog, horse
         self.images = []
         self.labels = []
         
@@ -188,8 +188,20 @@ def create_face_detection_dataloaders(batch_size=32, data_dir='./data', img_size
     Returns:
         train_loader, test_loader
     """
-    # Define transforms
-    transform = transforms.Compose([
+    # Define aggressive training transforms to prevent overfitting
+    train_transform = transforms.Compose([
+        transforms.Resize((img_size, img_size)),
+        transforms.RandomHorizontalFlip(p=0.5),
+        transforms.RandomRotation(degrees=20),
+        transforms.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4, hue=0.2),
+        transforms.RandomGrayscale(p=0.2),
+        transforms.RandomResizedCrop(img_size, scale=(0.7, 1.0)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ])
+    
+    # Simple validation/test transforms (no augmentation)
+    val_transform = transforms.Compose([
         transforms.Resize((img_size, img_size)),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
@@ -199,16 +211,16 @@ def create_face_detection_dataloaders(batch_size=32, data_dir='./data', img_size
     print("Creating Face Detection Dataset")
     print("="*60)
     
-    # Load face dataset (LFW)
+    # Load face dataset (LFW) - use train_transform to prevent overfitting
     try:
-        face_dataset = LFWFaceDataset(transform=transform, data_dir=os.path.join(data_dir, 'lfw-deepfunneled'))
+        face_dataset = LFWFaceDataset(transform=train_transform, data_dir=os.path.join(data_dir, 'lfw-deepfunneled'))
     except Exception as e:
         print(f"Failed to load LFW: {e}")
         print("Falling back to alternative...")
         # Fallback: Use CIFAR-10 classes with people
         print("Using CIFAR-10 as fallback (not ideal but works for testing)")
         cifar_data = torchvision.datasets.CIFAR10(root=data_dir, train=True, 
-                                                   download=True, transform=transform)
+                                                   download=True, transform=train_transform)
         # Use classes 2,3,4,5,6,7 as "face-like" (animals)
         face_images = [(img, 1) for img, label in cifar_data if label in [2,3,4,5,6,7]]
         
@@ -222,8 +234,9 @@ def create_face_detection_dataloaders(batch_size=32, data_dir='./data', img_size
         
         face_dataset = SimpleDataset(face_images)
     
-    # Load non-face dataset (CIFAR-10 vehicles)
-    non_face_dataset = NonFaceDataset(transform=transform, data_dir=data_dir)
+    # Load non-face dataset (CIFAR-10 animals now, not vehicles)
+    # Using animals makes task harder: organic shapes, eyes, fur vs skin/faces
+    non_face_dataset = NonFaceDataset(transform=train_transform, data_dir=data_dir)
     
     # Balance datasets (take minimum length)
     min_len = min(len(face_dataset), len(non_face_dataset))
@@ -533,9 +546,9 @@ def main():
     attack = UmupBitFlipAttack(
         model=model_quantized,
         dataset=test_loader.dataset,
-        target_asr=0.85,
-        max_bit_flips=20,
-        accuracy_threshold=0.05,
+        target_asr=0.70,  # Lower target to achieve better stealth (was 0.85)
+        max_bit_flips=15,  # Reduce max flips to limit damage (was 20)
+        accuracy_threshold=0.05,  # Keep 5% max drop
         device=device
     )
     

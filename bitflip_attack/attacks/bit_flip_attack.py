@@ -240,7 +240,12 @@ class BitFlipAttack:
         for idx in best_solution:
             candidate = candidates[idx]
             layer_idx = candidate['layer_idx']
-            layer = self.layer_info[layer_idx]
+            # Use layer_idx if valid, otherwise find by name
+            if layer_idx >= 0:
+                layer = self.layer_info[layer_idx]
+            else:
+                from bitflip_attack.attacks.helpers.evaluation import find_layer_by_name
+                layer = find_layer_by_name(self.layer_info, candidate['layer_name'])
             param_idx = candidate['parameter_idx']
             bit_pos = candidate['bit_position']
             

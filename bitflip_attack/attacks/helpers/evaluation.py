@@ -147,8 +147,11 @@ def evaluate_individual_fitness(model, dataset, individual, candidates, layer_in
         # If accuracy is acceptable, focus on maximizing ASR
         fitness = asr
     else:
-        # If accuracy is below threshold, penalize based on accuracy drop
-        fitness = asr - (accuracy_threshold - accuracy)
+        # If accuracy is below threshold, penalize heavily (multiply by 5 to discourage)
+        penalty = 5.0 * (accuracy_threshold - accuracy)
+        fitness = asr - penalty
+        # Ensure fitness doesn't go too negative
+        fitness = max(fitness, -1.0)
     
     return fitness, accuracy, asr
 
