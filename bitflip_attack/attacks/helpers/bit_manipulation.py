@@ -232,21 +232,23 @@ def flip_bit(layer, param_idx, bit_pos):
                  new_value = old_value # Fallback to original
         else: # Assumed float32 or float16
             try:
-                # Check for NaN or Infinity *before* viewing as int32
+                import struct
+                # Check for NaN or Infinity *before* bit manipulation
                 if torch.isnan(value_tensor) or torch.isinf(value_tensor):
                     print(f"Warning (in flip_bit): Skipping bit flip for NaN/inf value at {coords}.")
                     new_value = old_value # Keep the original value
                 elif value_tensor.dtype == torch.float16:
-                     # Handle float16 separately if needed (view as int16)
-                     int_repr = value_tensor.view(torch.int16).item()
-                     int_repr ^= (1 << bit_pos)
-                     new_value = torch.tensor([int_repr], dtype=torch.int16).view(torch.float16).item()
-                else: # Assume float32
-                    int_repr = value_tensor.view(torch.int32).item()
-                    int_repr ^= (1 << bit_pos)
-                    new_value = torch.tensor([int_repr], dtype=torch.int32).view(torch.float32).item()
+                     # Handle float16 - convert to uint16, flip bit, convert back
+                     # Note: np is already imported at module level
+                     bits = np.frombuffer(np.float16(value).tobytes(), dtype=np.uint16)[0]
+                     bits ^= (1 << bit_pos)
+                     new_value = np.frombuffer(np.uint16(bits).tobytes(), dtype=np.float16)[0].item()
+                else: # Assume float32 - use struct (unsigned int 'I' and float 'f')
+                    bits = struct.unpack('I', struct.pack('f', value))[0]
+                    bits ^= (1 << bit_pos)
+                    new_value = struct.unpack('f', struct.pack('I', bits))[0]
             except Exception as e_f32:
-                 # Catch potential overflow or other errors during view/convert
+                 # Catch potential overflow or other errors during conversion
                  print(f"Warning (in flip_bit): Error during float conversion/flip: {e_f32}. Using original value as fallback.")
                  new_value = old_value # Fallback to original value
     else: # Handle integer types

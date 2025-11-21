@@ -552,7 +552,13 @@ def main():
         device=device
     )
     
-    attack_results = attack.perform_attack(target_class=0)  # Make faces → non-faces
+    # OPTION 3: Quick test with reduced parameters (~1.5 hours)
+    # 5 generations × 30 population = 150 evaluations
+    attack_results = attack.perform_attack(
+        target_class=0,  # Make faces → non-faces
+        population_size=30,  # Reduced from 50
+        generations=5  # Reduced from 20
+    )
     
     print("\n" + "="*80)
     print("🎯 ATTACK RESULTS")
