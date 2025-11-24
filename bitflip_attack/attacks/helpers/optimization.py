@@ -5,9 +5,13 @@ This module contains genetic algorithm implementation for optimizing bit flips.
 """
 import numpy as np
 import torch
+import logging
 from bitflip_attack.attacks.helpers.evaluation import evaluate_individual_fitness
 from bitflip_attack.attacks.helpers.bit_manipulation import flip_bit
 import time
+
+# Set up logger
+logger = logging.getLogger(__name__)
 
 
 def genetic_optimization(model, dataset, candidates, layer_info, target_class, 
@@ -57,16 +61,16 @@ def genetic_optimization(model, dataset, candidates, layer_info, target_class,
     flip_history = []
     
     for gen in range(generations):
-        print(f"\n--- Starting Generation {gen+1}/{generations} ---") # DEBUG
+        logger.info(f"Starting Generation {gen+1}/{generations}")
         fitness_scores = []
         accuracies = []
         asrs = []
         
         # Evaluate each individual
-        print(f"Evaluating {len(population)} individuals...") # DEBUG
+        logger.info(f"Evaluating {len(population)} individuals...")
         for i, individual in enumerate(population):
-            print(f"  Evaluating individual {i+1}/{len(population)} (Size: {len(individual)} bits)") # DEBUG
-            start_eval_time = time.time() # DEBUG
+            logger.debug(f"  Evaluating individual {i+1}/{len(population)} (Size: {len(individual)} bits)")
+            start_eval_time = time.time()
             
             # Restore original weights
             # print("    Restoring original weights...") # DEBUG (Optional, can be verbose)
@@ -80,8 +84,9 @@ def genetic_optimization(model, dataset, candidates, layer_info, target_class,
                 target_class, attack_mode, accuracy_threshold,
                 device, custom_forward_fn
             )
-            eval_time = time.time() - start_eval_time # DEBUG
-            print(f"    Individual {i+1} - Fitness: {fitness:.4f}, Acc: {accuracy:.4f}, ASR: {asr:.4f}, Time: {eval_time:.2f}s") # DEBUG
+            eval_time = time.time() - start_eval_time
+            logger.debug(f"    Individual {i+1} - Fitness: {fitness:.4f}, Acc: {accuracy:.4f}, "
+                        f"ASR: {asr:.4f}, Time: {eval_time:.2f}s")
             
             fitness_scores.append(fitness)
             accuracies.append(accuracy)
@@ -111,26 +116,27 @@ def genetic_optimization(model, dataset, candidates, layer_info, target_class,
                         'bit_position': bit_pos,
                     })
         
-        # Print progress
+        # Log progress
         avg_fitness = sum(fitness_scores) / len(fitness_scores)
         avg_asr = sum(asrs) / len(asrs)
         avg_acc = sum(accuracies) / len(accuracies)
-        print(f"Generation {gen+1}/{generations}: Avg ASR = {avg_asr:.4f}, Avg Acc = {avg_acc:.4f}, Best ASR = {best_asr:.4f}")
+        logger.info(f"Generation {gen+1}/{generations}: Avg ASR = {avg_asr:.4f}, "
+                   f"Avg Acc = {avg_acc:.4f}, Best ASR = {best_asr:.4f}")
         
         # Early stopping if we've achieved high ASR
         if best_asr > 0.9:
-            print(f"Early stopping at generation {gen+1}: Target ASR achieved")
+            logger.info(f"Early stopping at generation {gen+1}: Target ASR achieved")
             break
         
         # Generate next population
-        print(f"--- Creating next generation ({gen+1}) ---") # DEBUG
-        start_next_gen_time = time.time() # DEBUG
+        logger.debug(f"Creating next generation ({gen+1})")
+        start_next_gen_time = time.time()
         next_population = create_next_generation(
             population, fitness_scores, pop_size,
             candidates, max_bit_flips
         )
-        next_gen_time = time.time() - start_next_gen_time # DEBUG
-        print(f"--- Next generation created in {next_gen_time:.2f}s ---") # DEBUG
+        next_gen_time = time.time() - start_next_gen_time
+        logger.debug(f"Next generation created in {next_gen_time:.2f}s")
         
         population = next_population
     

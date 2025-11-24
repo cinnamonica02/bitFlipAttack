@@ -6,7 +6,11 @@ on model parameters.
 """
 import torch
 import numpy as np
+import logging
 from bitflip_attack.attacks.helpers.sensitivity import compute_sensitivity
+
+# Set up logger
+logger = logging.getLogger(__name__)
 
 
 def select_bit_candidates(model, dataset, layer, n_candidates=1000, 
@@ -174,39 +178,28 @@ def flip_bit(layer, param_idx, bit_pos):
     num_elements = weight.numel()
     shape_at_check = weight.shape # Keep for debugging
 
-    print(f"--- flip_bit START ---") # Debug Start
-    print(f"  Layer: {layer.get('name', 'N/A')}, Original param_idx: {original_param_idx}, bit_pos: {bit_pos}")
-    print(f"  Weight shape: {shape_at_check}, Numel: {num_elements}")
+    logger.debug(f"flip_bit START - Layer: {layer.get('name', 'N/A')}, "
+                 f"param_idx: {original_param_idx}, bit_pos: {bit_pos}")
+    logger.debug(f"  Weight shape: {shape_at_check}, Numel: {num_elements}")
 
     if param_idx >= num_elements:
-        print(f"  Bounds check FAILED. Original idx: {original_param_idx}")
+        logger.warning(f"  Bounds check FAILED for idx: {original_param_idx}. "
+                      f"Correcting to: {param_idx % num_elements}")
         param_idx = param_idx % num_elements
-        print(f"  Corrected param_idx LOCALLY to: {param_idx}")
     else:
-        print(f"  Bounds check PASSED.")
+        logger.debug(f"  Bounds check PASSED")
 
-    # --- Debug right before np.unravel_index ---
-    print(f"  Attempting np.unravel_index with:")
-    print(f"    param_idx = {param_idx} (type: {type(param_idx)})")
-    print(f"    shape = {weight.shape} (type: {type(weight.shape)})")
-    # --- End Debug ---
+    logger.debug(f"  Attempting np.unravel_index - param_idx={param_idx}, shape={weight.shape}")
 
     try:
-        # This is the line causing the error
         coords = np.unravel_index(param_idx, weight.shape)
-        print(f"  np.unravel_index SUCCEEDED. Coords: {coords}")
+        logger.debug(f"  np.unravel_index SUCCESS - Coords: {coords}")
 
     except ValueError as e:
-        # --- Debugging if np.unravel_index fails ---
-        print(f"  ERROR: np.unravel_index FAILED!")
-        print(f"    Error message: {e}")
-        print(f"    param_idx used: {param_idx}") # Check if it reverted somehow
-        print(f"    weight.shape used: {weight.shape}")
-        print(f"    Original param_idx before check: {original_param_idx}")
-        print(f"    Shape at bounds check time: {shape_at_check}")
-        print(f"--- flip_bit END (Error) ---")
-        # --- End Debugging ---
-        raise e # Re-raise the original error
+        logger.error(f"  np.unravel_index FAILED! Error: {e}")
+        logger.error(f"    param_idx: {param_idx}, shape: {weight.shape}, "
+                    f"original_idx: {original_param_idx}")
+        raise e
 
     # ... (rest of the function: get value, flip bits, set value) ...
 
@@ -221,25 +214,24 @@ def flip_bit(layer, param_idx, bit_pos):
                 import struct
                 # Check for NaN/Inf before packing
                 if torch.isnan(value_tensor) or torch.isinf(value_tensor):
-                     print(f"Warning (in flip_bit): Skipping bit flip for 64-bit NaN/inf value at {coords}.")
+                     logger.warning(f"Skipping bit flip for 64-bit NaN/inf value at {coords}")
                      new_value = old_value
                 else:
                      bits = struct.unpack('Q', struct.pack('d', value))[0]
                      bits ^= (1 << bit_pos)
                      new_value = struct.unpack('d', struct.pack('Q', bits))[0]
             except Exception as e_f64:
-                 print(f"Warning (in flip_bit): Error during 64-bit float conversion/flip: {e_f64}. Using original value as fallback.")
-                 new_value = old_value # Fallback to original
+                 logger.warning(f"Error during 64-bit float conversion/flip: {e_f64}. Using fallback.")
+                 new_value = old_value
         else: # Assumed float32 or float16
             try:
                 import struct
                 # Check for NaN or Infinity *before* bit manipulation
                 if torch.isnan(value_tensor) or torch.isinf(value_tensor):
-                    print(f"Warning (in flip_bit): Skipping bit flip for NaN/inf value at {coords}.")
-                    new_value = old_value # Keep the original value
+                    logger.warning(f"Skipping bit flip for NaN/inf value at {coords}")
+                    new_value = old_value
                 elif value_tensor.dtype == torch.float16:
                      # Handle float16 - convert to uint16, flip bit, convert back
-                     # Note: np is already imported at module level
                      bits = np.frombuffer(np.float16(value).tobytes(), dtype=np.uint16)[0]
                      bits ^= (1 << bit_pos)
                      new_value = np.frombuffer(np.uint16(bits).tobytes(), dtype=np.float16)[0].item()
@@ -248,21 +240,20 @@ def flip_bit(layer, param_idx, bit_pos):
                     bits ^= (1 << bit_pos)
                     new_value = struct.unpack('f', struct.pack('I', bits))[0]
             except Exception as e_f32:
-                 # Catch potential overflow or other errors during conversion
-                 print(f"Warning (in flip_bit): Error during float conversion/flip: {e_f32}. Using original value as fallback.")
-                 new_value = old_value # Fallback to original value
+                 logger.warning(f"Error during float conversion/flip: {e_f32}. Using fallback.")
+                 new_value = old_value
     else: # Handle integer types
         try:
              new_value = int(value) ^ (1 << bit_pos)
         except Exception as e_int:
-             print(f"Warning (in flip_bit): Could not convert value {value} to int for bit flip: {e_int}. Using fallback.")
-             new_value = value # Fallback to no change
+             logger.warning(f"Could not convert value {value} to int for bit flip: {e_int}. Using fallback.")
+             new_value = value
 
     # Update the parameter
     try:
         weight.data[coords] = torch.tensor(new_value, dtype=weight.dtype)
     except Exception as e_update:
-        print(f"Error updating weight at {coords} with value {new_value}: {e_update}")
+        logger.error(f"Error updating weight at {coords} with value {new_value}: {e_update}")
 
-    print(f"--- flip_bit END (Success) ---") # Debug End
+    logger.debug(f"flip_bit SUCCESS - old_value: {old_value}, new_value: {new_value}")
     return old_value, new_value
