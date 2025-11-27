@@ -17,3 +17,4 @@ pii_model.pth
 results/
 .specstory/
 attack_run.log
+lfw_face_attack_20251127_194404/face_detector_baseline.pth
