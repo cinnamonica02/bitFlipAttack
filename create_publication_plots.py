@@ -194,7 +194,7 @@ def create_bit_analysis_plot(results, output_dir):
     ax1.bar(bit_counts.index, bit_counts.values, color=colors, alpha=0.8, width=0.8)
     ax1.set_xlabel('Bit Position', fontsize=12, weight='bold')
     ax1.set_ylabel('Number of Flips', fontsize=12, weight='bold')
-    ax1.set_title('Bit Position Distribution (12 flipped bits)', fontsize=13, weight='bold')
+    ax1.set_title(f'Bit Position Distribution ({len(flipped_bits)} flipped bits)', fontsize=13, weight='bold')
     ax1.grid(True, alpha=0.3, axis='y')
 
     # Add annotations
@@ -287,8 +287,8 @@ def create_attack_summary_card(results, output_dir):
     plt.close()
 
 def main():
-    # Load results
-    results_dir = 'results/lfw_face_attack_20251203_213616'
+    # Load results - STEALTH-FOCUSED RUN (4% threshold)
+    results_dir = 'results/lfw_face_attack_20251203_230251'
     output_dir = Path(results_dir) / 'publication_plots'
     output_dir.mkdir(exist_ok=True)
 
