@@ -461,7 +461,7 @@ def main():
         dataset=test_loader.dataset,
         target_asr=0.70,  # Target ASR for convergence
         max_bit_flips=15,  # Focused attack
-        accuracy_threshold=0.08,  # Increased from 0.05 to allow more aggressive attacks
+        accuracy_threshold=0.04,  # Match literature: 3-4% max drop for stealth
         device=device
     )
 
@@ -498,7 +498,7 @@ def main():
             'num_candidates': 2000,
             'target_asr': 0.70,
             'max_bit_flips': 15,
-            'accuracy_threshold': 0.08
+            'accuracy_threshold': 0.04
         },
         'baseline_metrics': {
             'accuracy': baseline_metrics['accuracy'],

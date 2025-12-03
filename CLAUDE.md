@@ -14,7 +14,7 @@ This is a research codebase for studying bit flip attacks on privacy-sensitive m
 
 ```bash
 # Initial setup - from repository root
-cd /root/bitFlipAttack
+cd /root/bitFlipAttack-1
 
 # Create and activate virtual environment
 python -m venv venv
@@ -37,7 +37,7 @@ apt-get update && apt-get install -y openmpi-bin libopenmpi-dev
 Always run scripts from the repository root using the `-m` module syntax:
 
 ```bash
-cd /root/bitFlipAttack
+cd /root/bitFlipAttack-1
 
 # Run the main u-μP attack example (recommended starting point)
 python -m bitflip_attack.examples.umup_attack_example
