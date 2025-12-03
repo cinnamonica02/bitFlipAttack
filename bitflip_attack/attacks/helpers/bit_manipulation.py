@@ -166,28 +166,69 @@ def get_relevant_bit_positions(bit_width):
 
 # In bitflip_attack/attacks/helpers/bit_manipulation.py
 
+# Global tracking for NaN/Inf skips during attack
+_nan_inf_skip_count = 0
+_nan_inf_skip_details = []
+
+
+def get_nan_inf_stats():
+    """Get statistics about NaN/Inf values encountered during bit flips."""
+    global _nan_inf_skip_count, _nan_inf_skip_details
+    return {
+        'total_skips': _nan_inf_skip_count,
+        'details': _nan_inf_skip_details.copy()
+    }
+
+
+def reset_nan_inf_stats():
+    """Reset the NaN/Inf tracking statistics."""
+    global _nan_inf_skip_count, _nan_inf_skip_details
+    _nan_inf_skip_count = 0
+    _nan_inf_skip_details = []
+
+
 def flip_bit(layer, param_idx, bit_pos):
     """
     Flip a specific bit in a model parameter.
-    ... (rest of docstring) ...
+
+    Args:
+        layer: Layer information dictionary containing 'module' and metadata
+        param_idx: Flattened index of the parameter to flip
+        bit_pos: Bit position to flip (0-indexed from LSB)
+
+    Returns:
+        Tuple of (old_value, new_value) after the bit flip
+
+    Raises:
+        ValueError: If param_idx is out of bounds
+        RuntimeError: If bit flip operation fails
     """
+    global _nan_inf_skip_count, _nan_inf_skip_details
+
     module = layer['module']
     weight = module.weight
-    original_param_idx = param_idx # Keep for debugging
+    original_param_idx = param_idx
 
     num_elements = weight.numel()
-    shape_at_check = weight.shape # Keep for debugging
+    shape_at_check = weight.shape
 
     logger.debug(f"flip_bit START - Layer: {layer.get('name', 'N/A')}, "
                  f"param_idx: {original_param_idx}, bit_pos: {bit_pos}")
     logger.debug(f"  Weight shape: {shape_at_check}, Numel: {num_elements}")
 
+    # Proper bounds checking - raise error instead of silent modulo fallback
     if param_idx >= num_elements:
-        logger.warning(f"  Bounds check FAILED for idx: {original_param_idx}. "
-                      f"Correcting to: {param_idx % num_elements}")
-        param_idx = param_idx % num_elements
-    else:
-        logger.debug(f"  Bounds check PASSED")
+        error_msg = (f"Parameter index {param_idx} out of bounds for tensor with "
+                    f"{num_elements} elements (layer: {layer.get('name', 'N/A')})")
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    if param_idx < 0:
+        error_msg = f"Parameter index {param_idx} is negative (layer: {layer.get('name', 'N/A')})"
+        logger.error(error_msg)
+        raise ValueError(error_msg)
+
+    logger.debug(f"  Bounds check PASSED")
 
     logger.debug(f"  Attempting np.unravel_index - param_idx={param_idx}, shape={weight.shape}")
 
@@ -212,36 +253,56 @@ def flip_bit(layer, param_idx, bit_pos):
         if value_tensor.dtype == torch.float64:
             try:
                 import struct
-                # Check for NaN/Inf before packing
+                # Check for NaN/Inf before packing - track the skip
                 if torch.isnan(value_tensor) or torch.isinf(value_tensor):
-                     logger.warning(f"Skipping bit flip for 64-bit NaN/inf value at {coords}")
-                     new_value = old_value
+                    _nan_inf_skip_count += 1
+                    skip_info = {
+                        'layer': layer.get('name', 'N/A'),
+                        'coords': coords,
+                        'value': str(value),
+                        'dtype': 'float64',
+                        'reason': 'NaN' if torch.isnan(value_tensor) else 'Inf'
+                    }
+                    _nan_inf_skip_details.append(skip_info)
+                    logger.warning(f"Skipping bit flip for 64-bit NaN/inf value at {coords} "
+                                  f"(total skips: {_nan_inf_skip_count})")
+                    new_value = old_value
                 else:
-                     bits = struct.unpack('Q', struct.pack('d', value))[0]
-                     bits ^= (1 << bit_pos)
-                     new_value = struct.unpack('d', struct.pack('Q', bits))[0]
+                    bits = struct.unpack('Q', struct.pack('d', value))[0]
+                    bits ^= (1 << bit_pos)
+                    new_value = struct.unpack('d', struct.pack('Q', bits))[0]
             except Exception as e_f64:
-                 logger.warning(f"Error during 64-bit float conversion/flip: {e_f64}. Using fallback.")
-                 new_value = old_value
-        else: # Assumed float32 or float16
+                logger.warning(f"Error during 64-bit float conversion/flip: {e_f64}. Using fallback.")
+                new_value = old_value
+        else:  # Assumed float32 or float16
             try:
                 import struct
-                # Check for NaN or Infinity *before* bit manipulation
+                # Check for NaN or Infinity *before* bit manipulation - track the skip
                 if torch.isnan(value_tensor) or torch.isinf(value_tensor):
-                    logger.warning(f"Skipping bit flip for NaN/inf value at {coords}")
+                    _nan_inf_skip_count += 1
+                    skip_info = {
+                        'layer': layer.get('name', 'N/A'),
+                        'coords': coords,
+                        'value': str(value),
+                        'dtype': str(value_tensor.dtype),
+                        'reason': 'NaN' if torch.isnan(value_tensor) else 'Inf'
+                    }
+                    _nan_inf_skip_details.append(skip_info)
+                    logger.warning(f"Skipping bit flip for NaN/inf value at {coords} "
+                                  f"(total skips: {_nan_inf_skip_count})")
                     new_value = old_value
                 elif value_tensor.dtype == torch.float16:
-                     # Handle float16 - convert to uint16, flip bit, convert back
-                     bits = np.frombuffer(np.float16(value).tobytes(), dtype=np.uint16)[0]
-                     bits ^= (1 << bit_pos)
-                     new_value = np.frombuffer(np.uint16(bits).tobytes(), dtype=np.float16)[0].item()
-                else: # Assume float32 - use struct (unsigned int 'I' and float 'f')
+                    # Handle float16 - convert to uint16, flip bit, convert back
+                    bits = np.frombuffer(np.float16(value).tobytes(), dtype=np.uint16)[0]
+                    bits ^= (1 << bit_pos)
+                    new_value = np.frombuffer(np.uint16(bits).tobytes(), dtype=np.float16)[0].item()
+                else:  # Assume float32 - use struct (unsigned int 'I' and float 'f')
                     bits = struct.unpack('I', struct.pack('f', value))[0]
                     bits ^= (1 << bit_pos)
                     new_value = struct.unpack('f', struct.pack('I', bits))[0]
             except Exception as e_f32:
-                 logger.warning(f"Error during float conversion/flip: {e_f32}. Using fallback.")
-                 new_value = old_value
+                logger.warning(f"Error during float conversion/flip: {e_f32}. Using fallback.")
+                new_value = old_value
     else: # Handle integer types
         try:
              new_value = int(value) ^ (1 << bit_pos)

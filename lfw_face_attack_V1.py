@@ -459,18 +459,18 @@ def main():
     attack = UmupBitFlipAttack(
         model=model_quantized,
         dataset=test_loader.dataset,
-        target_asr=0.85,
-        max_bit_flips=20,
-        accuracy_threshold=0.05,
+        target_asr=0.70,  # Target ASR for convergence
+        max_bit_flips=15,  # Focused attack
+        accuracy_threshold=0.08,  # Increased from 0.05 to allow more aggressive attacks
         device=device
     )
-    
-    # OPTION 2: Extended 3-hour run (~3 hours)
-    # 12 generations × 36 population = 432 evaluations
+
+    # Optimized settings for 65-75% ASR
     attack_results = attack.perform_attack(
         target_class=0,  # Make faces → non-faces
-        population_size=36,  # Balanced for better convergence
-        generations=12  # More generations for higher ASR
+        num_candidates=2000,  # Large candidate pool
+        population_size=50,  # Good search coverage
+        generations=20  # Increased for better convergence
     )
     
     print("\n" + "="*80)
@@ -493,11 +493,12 @@ def main():
             'dataset': 'LFW + CIFAR-10',
             'timestamp': timestamp,
             'attack_type': 'UMUP Bit-Flip Attack',
-            'generations': 12,
-            'population_size': 36,
-            'target_asr': 0.85,
-            'max_bit_flips': 20,
-            'accuracy_threshold': 0.05
+            'generations': 20,
+            'population_size': 50,
+            'num_candidates': 2000,
+            'target_asr': 0.70,
+            'max_bit_flips': 15,
+            'accuracy_threshold': 0.08
         },
         'baseline_metrics': {
             'accuracy': baseline_metrics['accuracy'],

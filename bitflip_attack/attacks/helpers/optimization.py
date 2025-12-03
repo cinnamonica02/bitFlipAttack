@@ -44,10 +44,25 @@ def genetic_optimization(model, dataset, candidates, layer_info, target_class,
         original_weights[layer['name']] = layer['module'].weight.data.clone()
     
     # Initialize population (each individual is a subset of candidate bits)
+    # Better initialization: explore diverse bit counts from 3 to max_bit_flips
     population = []
-    for _ in range(pop_size):
-        # Randomly select bits to include (max 10% of candidates or max_bit_flips)
-        n_bits = min(max_bit_flips, np.random.randint(1, max(2, min(len(candidates) // 10, max_bit_flips))))
+    min_bits = 3  # Start with at least 3 bits for meaningful attack
+    for i in range(pop_size):
+        # Vary the number of bits across the population for diversity
+        # First quarter: smaller solutions (3-5 bits)
+        # Second quarter: medium solutions (5-10 bits)
+        # Third quarter: larger solutions (10-max bits)
+        # Fourth quarter: random mix
+        if i < pop_size // 4:
+            n_bits = np.random.randint(min_bits, min(6, max_bit_flips) + 1)
+        elif i < pop_size // 2:
+            n_bits = np.random.randint(5, min(11, max_bit_flips) + 1)
+        elif i < 3 * pop_size // 4:
+            n_bits = np.random.randint(max(8, max_bit_flips // 2), max_bit_flips + 1)
+        else:
+            n_bits = np.random.randint(min_bits, max_bit_flips + 1)
+
+        n_bits = min(n_bits, len(candidates))  # Don't exceed candidates
         individual = np.random.choice(len(candidates), size=n_bits, replace=False)
         population.append(sorted(individual.tolist()))
     
@@ -56,10 +71,15 @@ def genetic_optimization(model, dataset, candidates, layer_info, target_class,
     best_solution = None
     best_asr = 0
     best_accuracy = 0
-    
+
+    # Convergence tracking
+    generations_without_improvement = 0
+    max_stagnant_generations = 4  # Stop if no improvement for 4 generations
+    previous_best_asr = 0
+
     # Store bit flip history for final report
     flip_history = []
-    
+
     for gen in range(generations):
         logger.info(f"Starting Generation {gen+1}/{generations}")
         fitness_scores = []
@@ -122,10 +142,27 @@ def genetic_optimization(model, dataset, candidates, layer_info, target_class,
         avg_acc = sum(accuracies) / len(accuracies)
         logger.info(f"Generation {gen+1}/{generations}: Avg ASR = {avg_asr:.4f}, "
                    f"Avg Acc = {avg_acc:.4f}, Best ASR = {best_asr:.4f}")
-        
-        # Early stopping if we've achieved high ASR
-        if best_asr > 0.9:
-            logger.info(f"Early stopping at generation {gen+1}: Target ASR achieved")
+
+        # Check for convergence (no improvement)
+        improvement_threshold = 0.01  # 1% improvement considered significant
+        if best_asr > previous_best_asr + improvement_threshold:
+            generations_without_improvement = 0
+            previous_best_asr = best_asr
+            logger.info(f"  -> New best ASR: {best_asr:.4f}")
+        else:
+            generations_without_improvement += 1
+            logger.info(f"  -> No significant improvement ({generations_without_improvement}/{max_stagnant_generations})")
+
+        # Early stopping conditions
+        # 1. Achieved very high ASR (above target)
+        if best_asr > 0.75:
+            logger.info(f"Early stopping at generation {gen+1}: High ASR achieved ({best_asr:.4f})")
+            break
+
+        # 2. Convergence: no improvement for several generations
+        if generations_without_improvement >= max_stagnant_generations:
+            logger.info(f"Early stopping at generation {gen+1}: Convergence detected "
+                       f"(no improvement for {max_stagnant_generations} generations)")
             break
         
         # Generate next population
