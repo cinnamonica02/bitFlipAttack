@@ -19,3 +19,4 @@ results/
 attack_run.log
 lfw_face_attack_20251127_194404/face_detector_baseline.pth
 lfw_face_attack_20251203_213616/face_detector_baseline.pth
+lfw_face_attack_20251203_230251/face_detector_baseline.pth
