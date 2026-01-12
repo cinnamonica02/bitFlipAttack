@@ -63,7 +63,7 @@ def create_comparison_table(results, output_dir):
         cellText=all_data,
         colLabels=['Method', 'Architecture', 'Dataset',
                    'ACC Before\n(%)', 'ACC After\n(%)', 'ACC Drop\n(%)',
-                   'Privacy Leak\nRate (%)', 'Bits\nFlipped'],
+                   'False Negative\nRate (%)', 'Bits\nFlipped'],
         cellLoc='center',
         loc='center',
         colWidths=[0.12, 0.12, 0.13, 0.11, 0.11, 0.11, 0.13, 0.10]
@@ -96,6 +96,11 @@ def create_comparison_table(results, output_dir):
 
     plt.title('Comparison with Literature: Bit-Flip Attack Effectiveness',
               fontsize=14, weight='bold', pad=20)
+
+    # Add clarification note
+    note_text = "Note: GROAN shows Backdoor ASR (trigger-based), Our method shows False Negative Rate (detection degradation)\nDifferent attack types - FNR values not directly comparable to GROAN ASR"
+    plt.figtext(0.5, 0.02, note_text, ha='center', fontsize=8, style='italic',
+                bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
 
     output_path = Path(output_dir) / 'comparison_table.png'
     plt.tight_layout()
@@ -141,7 +146,7 @@ def create_privacy_impact_plot(results, output_dir):
                     f'{height:.1f}%',
                     ha='center', va='bottom', fontsize=9)
 
-    # Right: Privacy Leak Rate (most important metric)
+    # Right: False Negative Rate (most important metric for model degradation)
     privacy_before = before['privacy_leak_rate'] * 100
     privacy_after = after['privacy_leak_rate'] * 100
     privacy_increase = privacy_after - privacy_before
@@ -150,8 +155,8 @@ def create_privacy_impact_plot(results, output_dir):
                    [privacy_before, privacy_after],
                    color=['#6A994E', '#C73E1D'], alpha=0.8, width=0.5)
 
-    ax2.set_ylabel('Privacy Leak Rate (%)', fontsize=12, weight='bold')
-    ax2.set_title('Privacy Violation Impact', fontsize=13, weight='bold')
+    ax2.set_ylabel('False Negative Rate (%)', fontsize=12, weight='bold')
+    ax2.set_title('Model Degradation Impact', fontsize=13, weight='bold')
     ax2.grid(True, alpha=0.3, axis='y')
     ax2.set_ylim([0, max(privacy_after * 1.2, 30)])
 
@@ -237,7 +242,7 @@ def create_attack_summary_card(results, output_dir):
     after = results['after_attack']
 
     # Title
-    title_text = "Bit-Flip Attack: Privacy Violation in Face Detection"
+    title_text = "Bit-Flip Attack: Model Integrity Degradation in Face Recognition"
     ax.text(0.5, 0.95, title_text, ha='center', va='top',
             fontsize=16, weight='bold', transform=ax.transAxes)
 
@@ -250,7 +255,7 @@ def create_attack_summary_card(results, output_dir):
     metrics = [
         ('Bits Flipped', f"{summary['bits_flipped']}", '#2E86AB'),
         ('Accuracy Drop', f"{summary['accuracy_drop']*100:.2f}%", '#F18F01'),
-        ('Privacy Leak Increase', f"+{(after['privacy_leak_rate']-before['privacy_leak_rate'])*100:.1f}pp", '#C73E1D'),
+        ('False Negative Rate Increase', f"+{(after['privacy_leak_rate']-before['privacy_leak_rate'])*100:.1f}pp", '#C73E1D'),
         ('Execution Time', f"{summary['execution_time']/60:.1f} min", '#6A994E')
     ]
 
@@ -274,9 +279,9 @@ def create_attack_summary_card(results, output_dir):
 
     # Bottom stats
     stats_text = (f"Before Attack: {before['accuracy']*100:.1f}% accuracy, "
-                 f"{before['privacy_leak_rate']*100:.1f}% privacy leak\n"
+                 f"{before['privacy_leak_rate']*100:.1f}% FNR\n"
                  f"After Attack: {after['accuracy']*100:.1f}% accuracy, "
-                 f"{after['privacy_leak_rate']*100:.1f}% privacy leak")
+                 f"{after['privacy_leak_rate']*100:.1f}% FNR")
     ax.text(0.5, 0.08, stats_text, ha='center', va='top',
             fontsize=9, style='italic', transform=ax.transAxes,
             bbox=dict(boxstyle='round', facecolor='#f0f0f0', alpha=0.5))
@@ -308,9 +313,11 @@ def main():
     print(f"\n✅ All visualizations saved to: {output_dir}")
     print("\nGenerated files:")
     print("  1. comparison_table.png - Compare with GROAN literature")
-    print("  2. privacy_impact.png - Before/after privacy metrics")
+    print("  2. privacy_impact.png - Before/after model degradation metrics")
     print("  3. bit_analysis.png - Bit position and impact analysis")
     print("  4. attack_summary_card.png - Summary for presentations")
+    print("\n⚠️  Labels updated to use 'Model Integrity Attack' framing")
+    print("   (False Negative Rate, not Privacy Leak)")
 
 if __name__ == "__main__":
     main()
