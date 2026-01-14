@@ -114,6 +114,25 @@ python visualize_literature_style.py
 
 # Create publication plots (comprehensive)
 python create_publication_plots.py
+
+# Create publication plots for face identification attacks
+python create_publication_plots_identification.py
+
+# Visualize confusion matrices
+python visualize_confusion_matrices.py
+```
+
+### Face Identification Experiments
+
+```bash
+# Run single face identification attack
+python lfw_face_identification_attack.py --max_bit_flips 10
+
+# Run multiple experiments with different configurations
+./run_identification_experiments.sh
+
+# Run specific versions
+python lfw_face_identification_attack_V2.py
 ```
 
 ## Architecture Overview
@@ -178,7 +197,8 @@ The codebase generates synthetic privacy-sensitive datasets:
 1. **PII Detection**: Text containing personally identifiable information
 2. **Medical Records**: Clinical notes with patient diagnoses and sensitive health data
 3. **Financial Data**: Loan applications and transaction data
-4. **Face Recognition**: LFW (Labeled Faces in the Wild) dataset for vision attacks
+4. **Face Detection**: LFW (Labeled Faces in the Wild) dataset for binary face detection
+5. **Face Identification**: LFW dataset adapted for multi-class person identification (using FaceNet/InceptionResnetV1)
 
 ### Important Patterns
 
