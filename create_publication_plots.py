@@ -1,5 +1,5 @@
 """
-Create Publication-Quality Visualizations for LFW Face Attack
+Create Publication-Quality Visualizations for Medical Imaging Attack
 Comparable to GROAN (USENIX Security 2024) paper style
 """
 
@@ -22,7 +22,7 @@ plt.rcParams['grid.linestyle'] = '--'
 
 def load_results(results_dir):
     """Load attack results from JSON"""
-    results_path = Path(results_dir) / 'final_comparison.json'
+    results_path = Path(results_dir) / 'comprehensive_results.json'
     with open(results_path, 'r') as f:
         return json.load(f)
 
@@ -44,16 +44,16 @@ def create_comparison_table(results, output_dir):
     ]
 
     # Our results
-    before = results['before_attack']
-    after = results['after_attack']
-    summary = results['attack_summary']
+    before = results['baseline_metrics']
+    after = results['attack_metrics']
+    summary = results['attack_info']
 
     our_data = [
-        ['Our Method', 'ResNet-32', 'LFW+CIFAR-10',
+        ['Our Method', 'ResNet-34', 'PneumoniaMNIST',
          f"{before['accuracy']*100:.2f}",
          f"{after['accuracy']*100:.2f}",
          f"{summary['accuracy_drop']*100:.2f}",
-         f"{after['privacy_leak_rate']*100:.2f}",  # Using privacy leak as "ASR"
+         f"{after['false_negative_rate']*100:.2f}",  # Disease miss rate
          str(summary['bits_flipped'])]
     ]
 
@@ -98,7 +98,7 @@ def create_comparison_table(results, output_dir):
               fontsize=14, weight='bold', pad=20)
 
     # Add clarification note
-    note_text = "Note: GROAN shows Backdoor ASR (trigger-based), Our method shows False Negative Rate (detection degradation)\nDifferent attack types - FNR values not directly comparable to GROAN ASR"
+    note_text = "Note: GROAN shows Backdoor ASR (trigger-based), Our method shows Disease Miss Rate (medical diagnosis degradation)\nDifferent attack types - Medical FNR values not directly comparable to GROAN ASR"
     plt.figtext(0.5, 0.02, note_text, ha='center', fontsize=8, style='italic',
                 bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
 
@@ -112,15 +112,15 @@ def create_privacy_impact_plot(results, output_dir):
     """
     Create bar plot showing privacy impact metrics
     """
-    before = results['before_attack']
-    after = results['after_attack']
+    before = results['baseline_metrics']
+    after = results['attack_metrics']
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
 
-    # Left: Accuracy and Face Recall
-    metrics = ['Accuracy', 'Face Recall']
-    before_vals = [before['accuracy']*100, before['face_recall']*100]
-    after_vals = [after['accuracy']*100, after['face_recall']*100]
+    # Left: Accuracy and Disease Recall
+    metrics = ['Accuracy', 'Disease Recall']
+    before_vals = [before['accuracy']*100, before['disease_recall']*100]
+    after_vals = [after['accuracy']*100, after['disease_recall']*100]
 
     x = np.arange(len(metrics))
     width = 0.35
@@ -131,7 +131,7 @@ def create_privacy_impact_plot(results, output_dir):
                     color='#C73E1D', alpha=0.8)
 
     ax1.set_ylabel('Rate (%)', fontsize=12, weight='bold')
-    ax1.set_title('Model Performance Before vs After Attack', fontsize=13, weight='bold')
+    ax1.set_title('Medical Diagnosis Model Performance Before vs After Attack', fontsize=13, weight='bold')
     ax1.set_xticks(x)
     ax1.set_xticklabels(metrics, fontsize=11)
     ax1.legend(fontsize=10)
@@ -146,19 +146,19 @@ def create_privacy_impact_plot(results, output_dir):
                     f'{height:.1f}%',
                     ha='center', va='bottom', fontsize=9)
 
-    # Right: False Negative Rate (most important metric for model degradation)
-    privacy_before = before['privacy_leak_rate'] * 100
-    privacy_after = after['privacy_leak_rate'] * 100
-    privacy_increase = privacy_after - privacy_before
+    # Right: Disease Miss Rate (False Negative Rate - most important metric for medical diagnosis degradation)
+    disease_miss_before = before['false_negative_rate'] * 100
+    disease_miss_after = after['false_negative_rate'] * 100
+    disease_miss_increase = disease_miss_after - disease_miss_before
 
     bars = ax2.bar(['Before\nAttack', 'After\nAttack'],
-                   [privacy_before, privacy_after],
+                   [disease_miss_before, disease_miss_after],
                    color=['#6A994E', '#C73E1D'], alpha=0.8, width=0.5)
 
-    ax2.set_ylabel('False Negative Rate (%)', fontsize=12, weight='bold')
-    ax2.set_title('Model Degradation Impact', fontsize=13, weight='bold')
+    ax2.set_ylabel('Disease Miss Rate (%)', fontsize=12, weight='bold')
+    ax2.set_title('Medical Diagnosis Degradation Impact', fontsize=13, weight='bold')
     ax2.grid(True, alpha=0.3, axis='y')
-    ax2.set_ylim([0, max(privacy_after * 1.2, 30)])
+    ax2.set_ylim([0, max(disease_miss_after * 1.2, 30)])
 
     # Add value labels
     for i, bar in enumerate(bars):
@@ -168,14 +168,24 @@ def create_privacy_impact_plot(results, output_dir):
                 ha='center', va='bottom', fontsize=11, weight='bold')
 
     # Add increase annotation
-    ax2.annotate(f'+{privacy_increase:.1f}pp\n({privacy_increase/privacy_before:.1f}x increase)',
-                xy=(0.5, privacy_before + privacy_increase/2),
-                xytext=(1.3, privacy_before + privacy_increase/2),
+    if disease_miss_before > 0.01:  # Only show multiplier if baseline is meaningful
+        increase_text = f'+{disease_miss_increase:.1f}pp\n({disease_miss_increase/disease_miss_before:.1f}x increase)'
+    else:
+        increase_text = f'+{disease_miss_increase:.1f}pp'
+
+    # Position annotation in the middle of the increase
+    annotation_y = disease_miss_before + disease_miss_increase/2
+    if annotation_y < 2:  # If too low, position it higher
+        annotation_y = disease_miss_after - 1
+
+    ax2.annotate(increase_text,
+                xy=(0.5, annotation_y),
+                xytext=(1.3, annotation_y),
                 fontsize=11, weight='bold', color='#C73E1D',
                 arrowprops=dict(arrowstyle='->', lw=2, color='#C73E1D'))
 
     plt.tight_layout()
-    output_path = Path(output_dir) / 'privacy_impact.png'
+    output_path = Path(output_dir) / 'medical_diagnosis_impact.png'
     plt.savefig(output_path, bbox_inches='tight', dpi=300)
     print(f"✓ Saved: {output_path}")
     plt.close()
@@ -184,6 +194,11 @@ def create_bit_analysis_plot(results, output_dir):
     """
     Analyze flipped bits: positions and impact
     """
+    # Check if detailed bit information is available
+    if 'attack_summary' not in results or 'flipped_bits' not in results['attack_summary']:
+        print("⚠️  Skipping bit analysis plot - detailed bit information not available")
+        return
+
     flipped_bits = results['attack_summary']['flipped_bits']
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
@@ -237,26 +252,27 @@ def create_attack_summary_card(results, output_dir):
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.axis('off')
 
-    summary = results['attack_summary']
-    before = results['before_attack']
-    after = results['after_attack']
+    attack_info = results['attack_info']
+    before = results['baseline_metrics']
+    after = results['attack_metrics']
+    exp_info = results['experiment_info']
 
     # Title
-    title_text = "Bit-Flip Attack: Model Integrity Degradation in Face Recognition"
+    title_text = "Bit-Flip Attack: Medical Diagnosis Model Degradation"
     ax.text(0.5, 0.95, title_text, ha='center', va='top',
             fontsize=16, weight='bold', transform=ax.transAxes)
 
     # Subtitle
-    subtitle = f"ResNet-32 on LFW + CIFAR-10 Dataset"
+    subtitle = f"{exp_info['model']} on {exp_info['dataset'].upper()} Dataset"
     ax.text(0.5, 0.88, subtitle, ha='center', va='top',
             fontsize=12, style='italic', transform=ax.transAxes)
 
     # Key metrics in boxes
     metrics = [
-        ('Bits Flipped', f"{summary['bits_flipped']}", '#2E86AB'),
-        ('Accuracy Drop', f"{summary['accuracy_drop']*100:.2f}%", '#F18F01'),
-        ('False Negative Rate Increase', f"+{(after['privacy_leak_rate']-before['privacy_leak_rate'])*100:.1f}pp", '#C73E1D'),
-        ('Execution Time', f"{summary['execution_time']/60:.1f} min", '#6A994E')
+        ('Bits Flipped', f"{attack_info['bits_flipped']}", '#2E86AB'),
+        ('Accuracy Drop', f"{attack_info['accuracy_drop']*100:.2f}%", '#F18F01'),
+        ('Disease Miss Rate Increase', f"+{attack_info['fnr_increase']*100:.1f}pp", '#C73E1D'),
+        ('Additional Diseases Missed', f"{int(attack_info['additional_diseases_missed'])}", '#6A994E')
     ]
 
     y_start = 0.70
@@ -279,9 +295,11 @@ def create_attack_summary_card(results, output_dir):
 
     # Bottom stats
     stats_text = (f"Before Attack: {before['accuracy']*100:.1f}% accuracy, "
-                 f"{before['privacy_leak_rate']*100:.1f}% FNR\n"
+                 f"{before['false_negative_rate']*100:.1f}% disease miss rate, "
+                 f"{int(before['diseases_missed'])}/{int(before['total_diseases'])} diseases missed\n"
                  f"After Attack: {after['accuracy']*100:.1f}% accuracy, "
-                 f"{after['privacy_leak_rate']*100:.1f}% FNR")
+                 f"{after['false_negative_rate']*100:.1f}% disease miss rate, "
+                 f"{int(after['diseases_missed'])}/{int(after['total_diseases'])} diseases missed")
     ax.text(0.5, 0.08, stats_text, ha='center', va='top',
             fontsize=9, style='italic', transform=ax.transAxes,
             bbox=dict(boxstyle='round', facecolor='#f0f0f0', alpha=0.5))
@@ -292,15 +310,15 @@ def create_attack_summary_card(results, output_dir):
     plt.close()
 
 def main():
-    # Load results - STEALTH-FOCUSED RUN (4% threshold)
-    results_dir = 'results/lfw_face_attack_20251203_230251'
+    # Load results - Medical Imaging Attack on PneumoniaMNIST
+    results_dir = 'results/medical_imaging_attack_pneumoniamnist_20260127_130813'
     output_dir = Path(results_dir) / 'publication_plots'
     output_dir.mkdir(exist_ok=True)
 
-    print("Loading results...")
+    print("Loading medical imaging attack results...")
     results = load_results(results_dir)
 
-    print("\nGenerating publication-quality visualizations...")
+    print("\nGenerating publication-quality visualizations for medical imaging attack...")
     print("="*60)
 
     # Generate all plots
@@ -313,11 +331,11 @@ def main():
     print(f"\n✅ All visualizations saved to: {output_dir}")
     print("\nGenerated files:")
     print("  1. comparison_table.png - Compare with GROAN literature")
-    print("  2. privacy_impact.png - Before/after model degradation metrics")
-    print("  3. bit_analysis.png - Bit position and impact analysis")
+    print("  2. medical_diagnosis_impact.png - Before/after medical diagnosis degradation metrics")
+    print("  3. bit_analysis.png - Bit position and impact analysis (if available)")
     print("  4. attack_summary_card.png - Summary for presentations")
-    print("\n⚠️  Labels updated to use 'Model Integrity Attack' framing")
-    print("   (False Negative Rate, not Privacy Leak)")
+    print("\n⚠️  Medical context: Labels show 'Disease Miss Rate' (False Negative Rate)")
+    print("   This represents diagnostic failures in pneumonia detection")
 
 if __name__ == "__main__":
     main()
